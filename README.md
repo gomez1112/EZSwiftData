@@ -56,8 +56,6 @@ struct PetApp: App {
         )
 
         model = DataModel(context: container.mainContext)
-        // Optional: wire into your own DI system.
-        AppDependencyManager.shared.add(dependency: model)
     }
 
     var body: some Scene {
