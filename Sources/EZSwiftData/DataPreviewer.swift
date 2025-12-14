@@ -18,7 +18,7 @@ import SwiftData
 ///
 /// This design lets you inject unlimited preview-only dependencies
 /// without `AnyView` and without arity-limited APIs.
-public struct DataPreviewer<
+nonisolated public struct DataPreviewer<
     Config: SwiftDataPreviewContextConfig,
     VM: ViewModifier
 >: PreviewModifier {
@@ -38,8 +38,8 @@ public struct DataPreviewer<
     }
 
     // PreviewModifier requires a *static* shared-context factory.
-    public static func makeSharedContext() async throws -> ModelContainer {
-        let container = ModelContainerFactory.create(
+   nonisolated public static func makeSharedContext() async throws -> ModelContainer {
+       let container = await ModelContainerFactory.create(
             for: Config.models,
             isStoredInMemoryOnly: true
         )

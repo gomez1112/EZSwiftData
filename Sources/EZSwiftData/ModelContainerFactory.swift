@@ -12,7 +12,7 @@ import SwiftData
 
 /// A small factory for creating SwiftData containers for production,
 /// previews, and tests.
-public struct ModelContainerFactory {
+nonisolated public struct ModelContainerFactory {
 
     /// Creates a `ModelContainer` for the provided model types.
     ///
