@@ -1,264 +1,310 @@
 # EZSwiftData
 
-A tiny Swift package that removes repeated SwiftData boilerplate for **production containers** and **preview seeding**, while keeping dependency injection **fully type-safe** and **AnyView-free**.
+Small, pragmatic helpers for **SwiftData** that make it easier to:
 
-This package is designed for apps that:
-- use SwiftData with multiple models
-- seed sample data in previews
-- want to inject any number of preview-only dependencies cleanly
-- prefer small, honest abstractions over complex “magic”
+- Create `ModelContainer`s for **production**, **previews**, and **tests**
+- Build **seeded SwiftUI previews** using the `#Preview` macro
+- Inject **unlimited preview-only dependencies** *without* `AnyView`
+- Add tiny **ModelContext insert helpers** for cleaner sample data seeding
+
+> **Philosophy:** minimal surface area, Apple-like APIs, and “progressive disclosure”: the simple path stays simple, and power features only appear when you need them.
 
 ---
 
-## Features
+## Requirements
 
-- ✅ Simple production container factory
-- ✅ Preview support with in-memory containers
-- ✅ Easy sample data seeding
-- ✅ Type-safe preview dependency injection via your own `ViewModifier`
-- ✅ No `AnyView`
-- ✅ No arity-limited environment APIs
-- ✅ Minimal per-app setup
-- ✅ Test suite included
+- Swift tools: **Swift 6.2**
+- Platforms:
+  - iOS **18+**
+  - macOS **15+**
+  - visionOS **2+**
+
+(These match the package manifest.)
 
 ---
 
 ## Installation
 
-Add the package in Xcode:
+### Swift Package Manager (Xcode)
 
-**File → Add Packages…**
+1. In Xcode: **File → Add Package Dependencies…**
+2. Paste your repository URL
+3. Add **EZSwiftData** to your app target
 
 Then import:
 
 ```swift
-import SwiftDataPreviewer
+import EZSwiftData
+import SwiftData
 ```
 
 ---
 
-## 1) Production usage
+## What’s Included
+
+### 1) `ModelContainerFactory`
+
+A tiny factory that creates a `ModelContainer` for a given set of model types.
+
+- **Production:** `isStoredInMemoryOnly: false` (default)
+- **Previews/Tests:** `isStoredInMemoryOnly: true`
+
+```swift
+import EZSwiftData
+import SwiftData
+
+@MainActor
+let container = ModelContainerFactory.create(
+    TestPet.self,
+    TestOwner.self
+)
+```
+
+Or with an explicit array:
+
+```swift
+@MainActor
+let container = ModelContainerFactory.create(
+    for: [TestPet.self, TestOwner.self],
+    isStoredInMemoryOnly: true
+)
+```
+
+#### Use in your `App`
 
 ```swift
 import SwiftUI
 import SwiftData
-import SwiftDataPreviewer
+import EZSwiftData
 
 @main
-struct PetApp: App {
-    let container: ModelContainer
-    let model: DataModel
-
-    init() {
-        container = ModelContainerFactory.create(
-            Pet.self,
-            TrainingSession.self
-        )
-
-        model = DataModel(context: container.mainContext)
-    }
+struct MyApp: App {
+    @MainActor
+    private let container = ModelContainerFactory.create(
+        MyModelA.self,
+        MyModelB.self
+    )
 
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environment(model)
                 .modelContainer(container)
         }
     }
 }
 ```
 
+> `create(...)` is `@MainActor`, which keeps SwiftData setup and context usage on the correct actor.
+
 ---
 
-## 2) Preview setup (recommended pattern)
+### 2) Seeded SwiftUI previews (no boilerplate)
 
-Create a single app-level preview config.
+EZSwiftData lets you define a **per-app preview config** describing:
+
+- which models your preview uses
+- how to insert your sample data
+
+#### Step 1 — Create a preview config
 
 ```swift
 import SwiftData
-import SwiftDataPreviewer
+import EZSwiftData
 
-enum PetPreviewConfig: SwiftDataPreviewContextConfig {
+enum AppPreviewConfig: SwiftDataPreviewContextConfig {
     static let models: [any PersistentModel.Type] = [
         Pet.self,
-        TrainingSession.self
+        Owner.self
     ]
 
     @MainActor
     static func seed(_ context: ModelContext) {
-        context.insert(Pet.samplePets)
-        context.insert(TrainingSession.sampleSessions)
+        context.insert(Pet(name: "Mango"))
+        context.insert(Pet(name: "Kiwi"))
+        context.insert(Owner(name: "Gerard"))
     }
 }
 ```
 
-> Tip: You should only need **one** config per app.
+#### Step 2 — Use it in `#Preview`
 
----
-
-## 3) Simple seeded previews (no extra dependencies)
-
-Use `PreviewTrait.seeded(...)`:
+**A. Simple seeded preview**
 
 ```swift
 import SwiftUI
-import SwiftDataPreviewer
+import EZSwiftData
 
-#Preview(traits: .seeded(PetPreviewConfig.self)) {
-    PetRowView(pet: .samplePet)
+#Preview("Seeded", traits: .seeded(AppPreviewConfig.self)) {
+    ContentView()
 }
 ```
 
-If you prefer a global alias:
+This path:
+1. Builds an **in-memory** SwiftData container from `AppPreviewConfig.models`
+2. Seeds it with `AppPreviewConfig.seed(_:)`
+3. Injects it via `.modelContainer(...)`
 
-```swift
-extension PreviewTrait {
-    @MainActor
-    static var devData: PreviewTrait {
-        .seeded(PetPreviewConfig.self)
-    }
-}
+**B. Seeded preview + custom dependencies (no `AnyView`)**
 
-#Preview(traits: .devData) {
-    PetRowView(pet: .samplePet)
-}
-```
-
----
-
-## 4) Previews with dependencies (unlimited)
-
-Define a single `ViewModifier` that builds and injects anything you need:
+If you want to also inject preview-only environment values (feature flags, mock services, etc.), use `.dev(...)`.
 
 ```swift
 import SwiftUI
 import SwiftData
+import EZSwiftData
 
 struct PreviewDependencies: ViewModifier {
     let context: ModelContext
 
     func body(content: Content) -> some View {
         content
-            .environment(DataModel(context: context))
-            .environment(SettingsStore())
-            // Add as many as you want:
-            // .environment(AnalyticsModel())
-            // .preferredColorScheme(.dark)
+            // Example: Inject anything you need for previews.
+            // .environment(\.myFeatureFlags, .preview)
+            // .environment(MyService.self, .mock)
     }
 }
-```
 
-Then use `PreviewTrait.dev(...)`:
-
-```swift
-import SwiftUI
-import SwiftDataPreviewer
-
-#Preview(traits: .dev(PetPreviewConfig.self) { ctx in
-    PreviewDependencies(context: ctx)
+#Preview("Dev", traits: .dev(AppPreviewConfig.self) { context in
+    PreviewDependencies(context: context)
 }) {
-    PetRowView(pet: .samplePet)
+    ContentView()
 }
 ```
 
-Or with an alias:
+**Why this design?**
+- You get **infinite dependencies** by composing a single concrete `ViewModifier`
+- No `AnyView`
+- No “arity-limited” overloads (no `.withA(...).withB(...)` ladders)
+
+---
+
+### 3) `ModelContext` insert helpers
+
+Seeding sample data is usually a lot of `insert(...)` calls. These helpers make it cleaner:
 
 ```swift
-extension PreviewTrait {
-    @MainActor
-    static var devData: PreviewTrait {
-        .dev(PetPreviewConfig.self) { ctx in
-            PreviewDependencies(context: ctx)
-        }
-    }
+import SwiftData
+import EZSwiftData
+
+@MainActor
+func seed(_ context: ModelContext) {
+    // Sequence
+    context.insert([Pet(name: "A"), Pet(name: "B")])
+
+    // Variadic
+    context.insert(
+        Pet(name: "C"),
+        Pet(name: "D")
+    )
 }
 ```
 
 ---
 
-## 5) Seed helpers
+## How it Works (High Level)
 
-The package includes convenience insert APIs:
+### `SwiftDataPreviewContextConfig`
+
+Your app defines:
+
+- `static var models: [any PersistentModel.Type]`
+- `static func seed(_ context: ModelContext)`
 
 ```swift
-@MainActor
-static func seed(_ context: ModelContext) {
-    context.insert(Pet.samplePets)
-    context.insert(TrainingSession.sampleSessions)
+public protocol SwiftDataPreviewContextConfig {
+    static var models: [any PersistentModel.Type] { get }
+    @MainActor static func seed(_ context: ModelContext)
 }
 ```
 
-You can also insert individual instances:
+### `DataPreviewer`
 
-```swift
-context.insert(Pet.samplePet)
-```
+A generic `PreviewModifier` that:
+
+1) Creates an in-memory container (via `ModelContainerFactory`)  
+2) Seeds it (via `Config.seed`)  
+3) Applies your concrete `ViewModifier` (if any)  
+4) Injects the container using `.modelContainer(context)`
+
+This pattern makes previews deterministic and keeps model access on the right actor.
 
 ---
 
 ## Testing
 
-This package ships with XCTest coverage for:
-- `ModelContainerFactory` success paths
-- `ModelContext.insert(...)` helpers
-- Preview trait constructors (`seeded` and `dev`)
-- `DataPreviewer` creation and static context setup through a test config
+EZSwiftData is designed so you can write tests that exercise the **public surface**:
 
-To run tests in Xcode:
-1. Select the `SwiftDataPreviewer` scheme.
-2. Press **⌘U**.
+- `ModelContainerFactory.create(...)` for container creation
+- `ModelContext.insert(...)` helpers for seeding
+- `DataPreviewer.makeSharedContext()` for validating preview context creation
 
-**Note on 100% coverage:**  
-If your implementation uses `fatalError(...)` for container creation failures, the failure branch is difficult to execute in unit tests without introducing a small test hook (e.g., an injectable error handler). If you want strict 100% line/branch coverage reports, consider adding a debug-only override point in `ModelContainerFactory` for tests. The included tests aim to cover all practical, non-crashing paths.
+Example in-memory setup:
 
----
-
-## Philosophy
-
-This package intentionally avoids:
-- `AnyView`-based type erasure
-- “infinite environment injection” APIs
-- heavy macro systems
-
-Instead, it gives you:
-- a small, stable core
-- app-authored `ViewModifier` injection for unlimited flexibility
-- minimal per-app setup
-
----
-
-## Suggested file layout in your app
-
-```
-App/
-  PetApp.swift
-
-Models/
-  Pet.swift
-  TrainingSession.swift
-  SampleData+Pet.swift
-
-PreviewSupport/
-  PetPreviewConfig.swift
-  PreviewDependencies.swift (optional)
-  PreviewTrait+DevData.swift
+```swift
+@MainActor
+func makeTestContainer() -> ModelContainer {
+    ModelContainerFactory.create(
+        for: [Pet.self, Owner.self],
+        isStoredInMemoryOnly: true
+    )
+}
 ```
 
+> If you ever want to test the `fatalError` path, you’ll need an injectable error handler or a small test hook. The package intentionally keeps the production factory tiny.
+
 ---
 
-## Quick start checklist
+## Concurrency & Actor Isolation Notes
 
-For each new SwiftData app:
+- `ModelContainerFactory.create(...)` is `@MainActor` to keep SwiftData setup aligned with UI usage.
+- `DataPreviewer.makeSharedContext()` is `nonisolated` + async (required by `PreviewModifier`), but it seeds on the `MainActor`:
+  - container creation is done via `ModelContainerFactory`
+  - seeding runs inside `MainActor.run { ... }`
 
-1. ✅ Add models
-2. ✅ Create one preview config
-3. ✅ (Optional) create one `PreviewDependencies` modifier
-4. ✅ Add a `.devData` alias
-5. ✅ Use `#Preview(traits: .devData)` everywhere
+If you see actor isolation warnings in your app preview code, ensure your seed logic is marked `@MainActor`.
+
+---
+
+## Progressive Disclosure
+
+You can adopt EZSwiftData in stages:
+
+1. **Just use `ModelContainerFactory`** for clean production + test containers
+2. Add **`SwiftDataPreviewContextConfig`** for seeded previews
+3. Use **`.dev(...)`** only when you need preview-only dependency injection
+
+---
+
+## FAQ
+
+### Why not ship a public “test container” API?
+You already get it with:
+
+```swift
+ModelContainerFactory.create(for:isStoredInMemoryOnly:)
+```
+
+Keeping it explicit avoids encouraging test-only patterns in production call sites.
+
+### Why a `ViewModifier` closure for preview dependencies?
+It guarantees:
+- concrete types (no `AnyView`)
+- composability (stack multiple `.environment(...)` calls)
+- zero arity limits (one closure can build anything)
+
+---
+
+## Package Layout
+
+- **ModelContainerFactory**: production + in-memory container creation
+- **SwiftDataPreviewContextConfig**: per-app preview definition (models + seed)
+- **DataPreviewer**: generic preview modifier that wires everything together
+- **PreviewTrait extensions**: `.seeded(...)` and `.dev(...)` convenience traits
+- **ModelContext extension**: `insert(...)` helpers for sequences + variadics
 
 ---
 
 ## License
 
-MIT
+MIT (or your preferred license). Add a `LICENSE` file to your repository to make it explicit.
 
