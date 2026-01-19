@@ -3,6 +3,7 @@
 Small, pragmatic helpers for **SwiftData** that make it easier to:
 
 - Create `ModelContainer`s for **production**, **previews**, and **tests**
+- Create **seeded containers in one call** for previews or tests
 - Build **seeded SwiftUI previews** using the `#Preview` macro
 - Inject **unlimited preview-only dependencies** *without* `AnyView`
 - Add tiny **ModelContext insert helpers** for cleaner sample data seeding
@@ -98,7 +99,29 @@ struct MyApp: App {
 
 ---
 
-### 2) Seeded SwiftUI previews (no boilerplate)
+### 2) One-line seeded containers (✨ great for previews & tests)
+
+Need a container and data immediately? Use `createSeeded(...)`:
+
+```swift
+import SwiftData
+import EZSwiftData
+
+@MainActor
+let container = ModelContainerFactory.createSeeded(
+    for: [Pet.self, Owner.self],
+    isStoredInMemoryOnly: true
+) { context in
+    context.insert(Pet(name: "Mango"))
+    context.insert(Owner(name: "Gerard"))
+}
+```
+
+This keeps setup compact while ensuring seeding runs on the `MainActor`.
+
+---
+
+### 3) Seeded SwiftUI previews (no boilerplate)
 
 EZSwiftData lets you define a **per-app preview config** describing:
 
@@ -178,7 +201,7 @@ struct PreviewDependencies: ViewModifier {
 
 ---
 
-### 3) `ModelContext` insert helpers
+### 4) `ModelContext` insert helpers
 
 Seeding sample data is usually a lot of `insert(...)` calls. These helpers make it cleaner:
 
@@ -296,7 +319,7 @@ It guarantees:
 
 ## Package Layout
 
-- **ModelContainerFactory**: production + in-memory container creation
+- **ModelContainerFactory**: production + in-memory container creation, plus `createSeeded(...)` for one-line seeding
 - **SwiftDataPreviewContextConfig**: per-app preview definition (models + seed)
 - **DataPreviewer**: generic preview modifier that wires everything together
 - **PreviewTrait extensions**: `.seeded(...)` and `.dev(...)` convenience traits
