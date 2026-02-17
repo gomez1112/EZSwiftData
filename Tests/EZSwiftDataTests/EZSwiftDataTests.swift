@@ -80,8 +80,8 @@ struct TestPreviewDependencies: ViewModifier {
 final class ModelContainerFactoryTests: XCTestCase {
     
     @MainActor
-    func testCreateSharedContainerWithVariadicModels() {
-        let container = ModelContainerFactory.create(
+    func testCreateSharedContainerWithVariadicModels() throws {
+        let container = try ModelContainerFactory.create(
             TestPet.self,
             TestOwner.self
         )
@@ -91,8 +91,8 @@ final class ModelContainerFactoryTests: XCTestCase {
     }
     
     @MainActor
-    func testCreateInMemoryContainerViaCreateFlag() {
-        let container = ModelContainerFactory.create(
+    func testCreateInMemoryContainerViaCreateFlag() throws {
+        let container = try ModelContainerFactory.create(
             for: [TestPet.self, TestOwner.self],
             isStoredInMemoryOnly: true
         )
@@ -186,7 +186,7 @@ private extension ModelContainerFactory {
         // We purposely call the same public API to keep behavior aligned.
         // This is kept in tests to avoid encouraging a public in-memory API
         // in production if you don't want it.
-        return create(for: models, isStoredInMemoryOnly: true)
+        return try create(for: models, isStoredInMemoryOnly: true)
     }
 }
 

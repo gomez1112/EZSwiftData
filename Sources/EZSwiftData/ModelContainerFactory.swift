@@ -13,6 +13,10 @@ import SwiftData
 /// A small factory for creating SwiftData containers for production,
 /// previews, and tests.
 nonisolated public struct ModelContainerFactory {
+    public enum Error: Swift.Error, Equatable {
+        case emptyModelList
+        case containerCreationFailed(String)
+    }
 
     /// Creates a `ModelContainer` for the provided model types.
     ///
@@ -23,7 +27,11 @@ nonisolated public struct ModelContainerFactory {
     public static func create(
         for models: [any PersistentModel.Type],
         isStoredInMemoryOnly: Bool = false
-    ) -> ModelContainer {
+    ) throws -> ModelContainer {
+        guard !models.isEmpty else {
+            throw Error.emptyModelList
+        }
+
         let schema = Schema(models)
         let configuration = ModelConfiguration(
             schema: schema,
@@ -33,7 +41,7 @@ nonisolated public struct ModelContainerFactory {
         do {
             return try ModelContainer(for: schema, configurations: configuration)
         } catch {
-            fatalError("Could not create model container: \(error.localizedDescription)")
+            throw Error.containerCreationFailed(error.localizedDescription)
         }
     }
 
@@ -42,8 +50,8 @@ nonisolated public struct ModelContainerFactory {
     public static func create(
         isStoredInMemoryOnly: Bool = false,
         _ models: any PersistentModel.Type...
-    ) -> ModelContainer {
-        create(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly)
+    ) throws -> ModelContainer {
+        try create(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly)
     }
 
     /// Creates a `ModelContainer`, then immediately seeds it.
@@ -57,8 +65,8 @@ nonisolated public struct ModelContainerFactory {
         for models: [any PersistentModel.Type],
         isStoredInMemoryOnly: Bool = false,
         seed: @MainActor (ModelContext) -> Void
-    ) -> ModelContainer {
-        let container = create(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly)
+    ) throws -> ModelContainer {
+        let container = try create(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly)
         seed(container.mainContext)
         return container
     }
@@ -69,7 +77,7 @@ nonisolated public struct ModelContainerFactory {
         isStoredInMemoryOnly: Bool = false,
         seed: @MainActor (ModelContext) -> Void,
         _ models: any PersistentModel.Type...
-    ) -> ModelContainer {
-        createSeeded(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly, seed: seed)
+    ) throws -> ModelContainer {
+        try createSeeded(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly, seed: seed)
     }
 }

@@ -55,7 +55,7 @@ import EZSwiftData
 import SwiftData
 
 @MainActor
-let container = ModelContainerFactory.create(
+let container = try ModelContainerFactory.create(
     TestPet.self,
     TestOwner.self
 )
@@ -65,7 +65,7 @@ Or with an explicit array:
 
 ```swift
 @MainActor
-let container = ModelContainerFactory.create(
+let container = try ModelContainerFactory.create(
     for: [TestPet.self, TestOwner.self],
     isStoredInMemoryOnly: true
 )
@@ -80,11 +80,19 @@ import EZSwiftData
 
 @main
 struct MyApp: App {
+    private let container: ModelContainer
+
     @MainActor
-    private let container = ModelContainerFactory.create(
-        MyModelA.self,
-        MyModelB.self
-    )
+    init() {
+        do {
+            container = try ModelContainerFactory.create(
+                MyModelA.self,
+                MyModelB.self
+            )
+        } catch {
+            fatalError("Failed to create ModelContainer: \(error)")
+        }
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -108,7 +116,7 @@ import SwiftData
 import EZSwiftData
 
 @MainActor
-let container = ModelContainerFactory.createSeeded(
+let container = try ModelContainerFactory.createSeeded(
     for: [Pet.self, Owner.self],
     isStoredInMemoryOnly: true
 ) { context in
@@ -265,15 +273,15 @@ Example in-memory setup:
 
 ```swift
 @MainActor
-func makeTestContainer() -> ModelContainer {
-    ModelContainerFactory.create(
+func makeTestContainer() throws -> ModelContainer {
+    try ModelContainerFactory.create(
         for: [Pet.self, Owner.self],
         isStoredInMemoryOnly: true
     )
 }
 ```
 
-> If you ever want to test the `fatalError` path, you’ll need an injectable error handler or a small test hook. The package intentionally keeps the production factory tiny.
+> Errors are thrown as `ModelContainerFactory.Error` so you can assert failure paths without a `fatalError` hook.
 
 ---
 
@@ -304,7 +312,7 @@ You can adopt EZSwiftData in stages:
 You already get it with:
 
 ```swift
-ModelContainerFactory.create(for:isStoredInMemoryOnly:)
+try ModelContainerFactory.create(for:isStoredInMemoryOnly:)
 ```
 
 Keeping it explicit avoids encouraging test-only patterns in production call sites.

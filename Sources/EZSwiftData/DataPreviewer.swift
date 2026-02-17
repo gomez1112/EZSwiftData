@@ -39,7 +39,7 @@ nonisolated public struct DataPreviewer<
 
     // PreviewModifier requires a *static* shared-context factory.
    nonisolated public static func makeSharedContext() async throws -> ModelContainer {
-       let container = await ModelContainerFactory.create(
+       let container = try await ModelContainerFactory.create(
             for: Config.models,
             isStoredInMemoryOnly: true
         )
