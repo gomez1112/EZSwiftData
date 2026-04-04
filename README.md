@@ -179,6 +179,8 @@ This path:
 
 If you want to also inject preview-only environment values (feature flags, mock services, etc.), use `.dev(...)`.
 
+You can also start with `.dev(AppPreviewConfig.self)` and add dependencies later.
+
 ```swift
 import SwiftUI
 import SwiftData
@@ -195,6 +197,7 @@ struct PreviewDependencies: ViewModifier {
     }
 }
 
+// Cleaner call-site (unlabeled closure)
 #Preview("Dev", traits: .dev(AppPreviewConfig.self) { context in
     PreviewDependencies(context: context)
 }) {
