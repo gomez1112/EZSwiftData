@@ -48,6 +48,32 @@ final class TestOwner {
     ]
 }
 
+enum TestSchemaV1: VersionedSchema {
+    static let versionIdentifier = Schema.Version(1, 0, 0)
+    static let models: [any PersistentModel.Type] = [
+        TestPet.self
+    ]
+}
+
+enum TestSchemaV2: VersionedSchema {
+    static let versionIdentifier = Schema.Version(2, 0, 0)
+    static let models: [any PersistentModel.Type] = [
+        TestPet.self,
+        TestOwner.self
+    ]
+}
+
+enum TestMigrationPlan: SchemaMigrationPlan {
+    static let schemas: [any VersionedSchema.Type] = [
+        TestSchemaV1.self,
+        TestSchemaV2.self
+    ]
+
+    static let stages: [MigrationStage] = [
+        .lightweight(fromVersion: TestSchemaV1.self, toVersion: TestSchemaV2.self)
+    ]
+}
+
 // MARK: - Preview Config for Tests
 
 enum TestPreviewConfig: SwiftDataPreviewContextConfig {
@@ -78,7 +104,7 @@ struct TestPreviewDependencies: ViewModifier {
 // MARK: - Tests
 
 final class ModelContainerFactoryTests: XCTestCase {
-    
+
     @MainActor
     func testCreateSharedContainerWithVariadicModels() throws {
         let container = try ModelContainerFactory.create(
@@ -89,7 +115,7 @@ final class ModelContainerFactoryTests: XCTestCase {
         // Assert the container provides a valid main context.
         XCTAssertNotNil(container.mainContext)
     }
-    
+
     @MainActor
     func testCreateInMemoryContainerViaCreateFlag() throws {
         let container = try ModelContainerFactory.create(
@@ -98,6 +124,28 @@ final class ModelContainerFactoryTests: XCTestCase {
         )
         
         XCTAssertNotNil(container.mainContext)
+    }
+
+    @MainActor
+    func testCreateContainerForVersionedSchema() throws {
+        let container = try ModelContainerFactory.create(
+            for: TestSchemaV2.self,
+            isStoredInMemoryOnly: true
+        )
+
+        XCTAssertEqual(container.schema.version, TestSchemaV2.versionIdentifier)
+        XCTAssertNil(container.migrationPlan)
+    }
+
+    @MainActor
+    func testCreateContainerWithMigrationPlan() throws {
+        let container = try ModelContainerFactory.create(
+            migrationPlan: TestMigrationPlan.self,
+            isStoredInMemoryOnly: true
+        )
+
+        XCTAssertEqual(container.schema.version, TestSchemaV2.versionIdentifier)
+        XCTAssertTrue(container.migrationPlan == TestMigrationPlan.self)
     }
 }
 
@@ -145,9 +193,10 @@ final class PreviewTraitConvenienceTests: XCTestCase {
     }
     
     @MainActor func testDevTraitBuilds() {
-        let trait = PreviewTrait.dev(TestPreviewConfig.self) { ctx in
+        let modifier: @MainActor (ModelContext) -> TestPreviewDependencies = { ctx in
             TestPreviewDependencies(context: ctx)
         }
+        let trait = PreviewTrait.dev(TestPreviewConfig.self, modifier)
         XCTAssertNotNil(trait)
     }
 }
@@ -189,4 +238,3 @@ private extension ModelContainerFactory {
         return try create(for: models, isStoredInMemoryOnly: true)
     }
 }
-

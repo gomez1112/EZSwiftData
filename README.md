@@ -3,6 +3,7 @@
 Small, pragmatic helpers for **SwiftData** that make it easier to:
 
 - Create `ModelContainer`s for **production**, **previews**, and **tests**
+- Create `ModelContainer`s that support **SwiftData migrations**
 - Create **seeded containers in one call** for previews or tests
 - Build **seeded SwiftUI previews** using the `#Preview` macro
 - Inject **unlimited preview-only dependencies** *without* `AnyView`
@@ -70,6 +71,64 @@ let container = try ModelContainerFactory.create(
     isStoredInMemoryOnly: true
 )
 ```
+
+#### Migration-aware containers
+
+If your app uses `VersionedSchema` and `SchemaMigrationPlan`, EZSwiftData can create the container with the migration plan attached:
+
+```swift
+import EZSwiftData
+import SwiftData
+
+enum AppSchemaV1: VersionedSchema {
+    static let versionIdentifier = Schema.Version(1, 0, 0)
+    static let models: [any PersistentModel.Type] = [
+        Pet.self
+    ]
+}
+
+enum AppSchemaV2: VersionedSchema {
+    static let versionIdentifier = Schema.Version(2, 0, 0)
+    static let models: [any PersistentModel.Type] = [
+        Pet.self,
+        Owner.self
+    ]
+}
+
+enum AppMigrationPlan: SchemaMigrationPlan {
+    static let schemas: [any VersionedSchema.Type] = [
+        AppSchemaV1.self,
+        AppSchemaV2.self
+    ]
+
+    static let stages: [MigrationStage] = [
+        .lightweight(fromVersion: AppSchemaV1.self, toVersion: AppSchemaV2.self)
+    ]
+}
+
+@MainActor
+let container = try ModelContainerFactory.create(
+    migrationPlan: AppMigrationPlan.self
+)
+```
+
+This uses the explicit convenience API:
+
+```swift
+ModelContainerFactory.create(migrationPlan: AppMigrationPlan.self)
+```
+
+You can also provide the current schema explicitly:
+
+```swift
+@MainActor
+let container = try ModelContainerFactory.create(
+    for: AppSchemaV2.self,
+    migrationPlan: AppMigrationPlan.self
+)
+```
+
+When using `create(migrationPlan:)`, EZSwiftData loads the last schema listed in `AppMigrationPlan.schemas` as the current schema and passes the migration plan through to SwiftData.
 
 #### Use in your `App`
 
@@ -269,6 +328,7 @@ This pattern makes previews deterministic and keeps model access on the right ac
 EZSwiftData is designed so you can write tests that exercise the **public surface**:
 
 - `ModelContainerFactory.create(...)` for container creation
+- `ModelContainerFactory.create(migrationPlan:...)` for migration-aware container creation
 - `ModelContext.insert(...)` helpers for seeding
 - `DataPreviewer.makeSharedContext()` for validating preview context creation
 
