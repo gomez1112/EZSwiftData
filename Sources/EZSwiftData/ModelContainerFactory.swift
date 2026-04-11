@@ -129,10 +129,10 @@ nonisolated public struct ModelContainerFactory {
     public static func createSeeded(
         for models: [any PersistentModel.Type],
         isStoredInMemoryOnly: Bool = false,
-        seed: @MainActor (ModelContext) -> Void
+        seed: @MainActor (ModelContext) throws -> Void
     ) throws -> ModelContainer {
         let container = try create(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly)
-        seed(container.mainContext)
+        try seed(container.mainContext)
         return container
     }
 
@@ -140,7 +140,7 @@ nonisolated public struct ModelContainerFactory {
     @MainActor
     public static func createSeeded(
         isStoredInMemoryOnly: Bool = false,
-        seed: @MainActor (ModelContext) -> Void,
+        seed: @MainActor (ModelContext) throws -> Void,
         _ models: any PersistentModel.Type...
     ) throws -> ModelContainer {
         try createSeeded(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly, seed: seed)

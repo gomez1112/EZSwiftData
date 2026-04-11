@@ -105,6 +105,10 @@ struct TestPreviewDependencies: ViewModifier {
 
 final class ModelContainerFactoryTests: XCTestCase {
 
+    enum TestSeedError: Swift.Error, Equatable {
+        case failed
+    }
+
     @MainActor
     func testCreateSharedContainerWithVariadicModels() throws {
         let container = try ModelContainerFactory.create(
@@ -146,6 +150,20 @@ final class ModelContainerFactoryTests: XCTestCase {
 
         XCTAssertEqual(container.schema.version, TestSchemaV2.versionIdentifier)
         XCTAssertTrue(container.migrationPlan == TestMigrationPlan.self)
+    }
+
+    @MainActor
+    func testCreateSeededPropagatesSeedError() {
+        XCTAssertThrowsError(
+            try ModelContainerFactory.createSeeded(
+                for: [TestPet.self],
+                isStoredInMemoryOnly: true
+            ) { _ in
+                throw TestSeedError.failed
+            }
+        ) { error in
+            XCTAssertEqual(error as? TestSeedError, .failed)
+        }
     }
 }
 
