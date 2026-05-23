@@ -14,9 +14,9 @@ import SwiftData
 /// - the sample data insertion logic
 public protocol SwiftDataPreviewContextConfig {
     static var models: [any PersistentModel.Type] { get }
-    @MainActor static func seed(_ context: ModelContext)
+    @MainActor static func seed(_ context: ModelContext) throws
 }
 
 public extension SwiftDataPreviewContextConfig {
-    @MainActor static func seed(_ context: ModelContext) { }
+    @MainActor static func seed(_ context: ModelContext) throws { }
 }

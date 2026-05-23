@@ -145,4 +145,29 @@ nonisolated public struct ModelContainerFactory {
     ) throws -> ModelContainer {
         try createSeeded(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly, seed: seed)
     }
+
+    /// Creates a `ModelContainer`, then asynchronously seeds it.
+    ///
+    /// This is useful when seed data requires async work while still
+    /// ensuring model context mutations stay on the `MainActor`.
+    @MainActor
+    public static func createSeeded(
+        for models: [any PersistentModel.Type],
+        isStoredInMemoryOnly: Bool = false,
+        seed: @MainActor (ModelContext) async throws -> Void
+    ) async throws -> ModelContainer {
+        let container = try create(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly)
+        try await seed(container.mainContext)
+        return container
+    }
+
+    /// Variadic convenience overload for async `createSeeded`.
+    @MainActor
+    public static func createSeeded(
+        isStoredInMemoryOnly: Bool = false,
+        seed: @MainActor (ModelContext) async throws -> Void,
+        _ models: any PersistentModel.Type...
+    ) async throws -> ModelContainer {
+        try await createSeeded(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly, seed: seed)
+    }
 }

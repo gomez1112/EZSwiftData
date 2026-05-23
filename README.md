@@ -186,6 +186,20 @@ let container = try ModelContainerFactory.createSeeded(
 
 This keeps setup compact while ensuring seeding runs on the `MainActor`.
 
+If your seed workflow needs async work, use the async overload:
+
+```swift
+@MainActor
+let container = try await ModelContainerFactory.createSeeded(
+    for: [Pet.self],
+    isStoredInMemoryOnly: true
+) { context in
+    context.insert(Pet(name: "Mango"))
+    // e.g. await network/client setup before final seed inserts
+}
+```
+
+
 ---
 
 ### 3) Seeded SwiftUI previews (no boilerplate)
@@ -208,7 +222,7 @@ enum AppPreviewConfig: SwiftDataPreviewContextConfig {
     ]
 
     @MainActor
-    static func seed(_ context: ModelContext) {
+    static func seed(_ context: ModelContext) throws {
         context.insert(Pet(name: "Mango"))
         context.insert(Pet(name: "Kiwi"))
         context.insert(Owner(name: "Gerard"))
@@ -306,7 +320,7 @@ Your app defines:
 ```swift
 public protocol SwiftDataPreviewContextConfig {
     static var models: [any PersistentModel.Type] { get }
-    @MainActor static func seed(_ context: ModelContext)
+    @MainActor static func seed(_ context: ModelContext) throws
 }
 ```
 
