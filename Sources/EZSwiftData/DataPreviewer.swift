@@ -44,8 +44,8 @@ nonisolated public struct DataPreviewer<
             isStoredInMemoryOnly: true
         )
 
-        await MainActor.run {
-            Config.seed(container.mainContext)
+        try await MainActor.run {
+            try Config.seed(container.mainContext)
         }
 
         return container
