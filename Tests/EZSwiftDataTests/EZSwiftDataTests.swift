@@ -83,9 +83,25 @@ enum TestPreviewConfig: SwiftDataPreviewContextConfig {
     ]
     
     @MainActor
-    static func seed(_ context: ModelContext) {
+    static func seed(_ context: ModelContext) throws {
         context.insert(TestPet.samples)
         context.insert(TestOwner.samples)
+    }
+}
+
+enum ThrowingPreviewConfig: SwiftDataPreviewContextConfig {
+    enum SeedError: Swift.Error, Equatable {
+        case failed
+    }
+
+    static let models: [any PersistentModel.Type] = [
+        TestPet.self
+    ]
+
+    @MainActor
+    static func seed(_ context: ModelContext) throws {
+        let _ = context
+        throw SeedError.failed
     }
 }
 
@@ -165,6 +181,19 @@ final class ModelContainerFactoryTests: XCTestCase {
             XCTAssertEqual(error as? TestSeedError, .failed)
         }
     }
+
+    @MainActor
+    func testCreateSeededAsyncSeedsData() async throws {
+        let container = try await ModelContainerFactory.createSeeded(
+            for: [TestPet.self],
+            isStoredInMemoryOnly: true
+        ) { context in
+            context.insert(TestPet(name: "Async"))
+        }
+
+        let results = try container.mainContext.fetch(FetchDescriptor<TestPet>())
+        XCTAssertEqual(results.count, 1)
+    }
 }
 
 final class ModelContextInsertHelpersTests: XCTestCase {
@@ -240,6 +269,17 @@ final class DataPreviewerTests: XCTestCase {
 
         XCTAssertEqual(petsCount, expectedPets)
         XCTAssertEqual(ownersCount, expectedOwners)
+    }
+
+    func testDataPreviewerStaticContextCreationPropagatesSeedError() async {
+        do {
+            _ = try await DataPreviewer<ThrowingPreviewConfig, EmptyModifier>.makeSharedContext()
+            XCTFail("Expected seed error to be thrown")
+        } catch let error as ThrowingPreviewConfig.SeedError {
+            XCTAssertEqual(error, .failed)
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
     }
 }
 
