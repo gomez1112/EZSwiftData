@@ -42,15 +42,4 @@ public extension PreviewTrait where T == Preview.ViewTraits {
         .modifier(DataPreviewer<Config, EmptyModifier> { _ in EmptyModifier() })
     }
 
-    /// Backwards-compatible overload using the old labeled closure.
-    @available(*, deprecated, renamed: "dev(_:_:)")
-    static func dev<
-        Config: SwiftDataPreviewContextConfig,
-        VM: ViewModifier
-    >(
-        _ config: Config.Type,
-        modifier: @escaping @MainActor (ModelContext) -> VM
-    ) -> PreviewTrait {
-        dev(config, modifier)
-    }
 }

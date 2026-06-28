@@ -14,7 +14,8 @@ import SwiftData
 /// A PreviewModifier that:
 /// 1) Builds an in-memory SwiftData container from `Config.models`
 /// 2) Seeds it using `Config.seed`
-/// 3) Applies a caller-provided `ViewModifier` built from the `ModelContext`
+/// 3) Injects the container and applies a caller-provided `ViewModifier`
+///    built from the `ModelContext`
 ///
 /// This design lets you inject unlimited preview-only dependencies
 /// without `AnyView` and without arity-limited APIs.
@@ -53,8 +54,10 @@ nonisolated public struct DataPreviewer<
 
     @MainActor
     public func body(content: Content, context: ModelContainer) -> some View {
-        content
-            .modifier(modifierBuilder(context.mainContext))
-            .modelContainer(context)
+        Group {
+            content
+                .modifier(modifierBuilder(context.mainContext))
+        }
+        .modelContainer(context)
     }
 }

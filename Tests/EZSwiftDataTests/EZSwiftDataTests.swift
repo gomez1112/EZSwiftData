@@ -246,6 +246,14 @@ final class PreviewTraitConvenienceTests: XCTestCase {
         let trait = PreviewTrait.dev(TestPreviewConfig.self, modifier)
         XCTAssertNotNil(trait)
     }
+
+    @MainActor func testDevTraitSupportsTrailingClosure() {
+        let trait = PreviewTrait.dev(TestPreviewConfig.self) { context in
+            TestPreviewDependencies(context: context)
+        }
+
+        XCTAssertNotNil(trait)
+    }
 }
 
 final class DataPreviewerTests: XCTestCase {
