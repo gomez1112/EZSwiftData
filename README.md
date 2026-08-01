@@ -8,6 +8,7 @@ Small, pragmatic helpers for **SwiftData** that make it easier to:
 - Build **seeded SwiftUI previews** using the `#Preview` macro
 - Inject **unlimited preview-only dependencies** *without* `AnyView`
 - Add tiny **ModelContext insert helpers** for cleaner sample data seeding
+- Share CloudKit record zones with other iCloud users
 
 > **Philosophy:** minimal surface area, Apple-like APIs, and “progressive disclosure”: the simple path stays simple, and power features only appear when you need them.
 
@@ -17,11 +18,62 @@ Small, pragmatic helpers for **SwiftData** that make it easier to:
 
 - Swift tools: **Swift 6.2**
 - Platforms:
-  - iOS **18+**
+  - iOS **26+**
   - macOS **15+**
   - visionOS **2+**
 
 (These match the package manifest.)
+
+---
+
+## Sharing records with other iCloud users
+
+`CloudKitSharingStore` adds Apple-native collaboration without adding a third-party dependency. SwiftData's CloudKit-backed `ModelConfiguration` synchronizes a user's private data, but does not expose `CKShare`; shared records therefore live in a dedicated CloudKit record zone. Your app explicitly translates between its SwiftData models and `CKRecord` values, which keeps local persistence and collaboration boundaries clear.
+
+Before using this API, enable **iCloud → CloudKit** for the consuming app target, add the container to its entitlements, and deploy the record types used below in CloudKit Console.
+
+### Create and present a collaboration
+
+```swift
+import CloudKit
+import EZSwiftData
+import SwiftUI
+
+let containerIdentifier = "iCloud.com.example.MyApp"
+let ownerStore = try CloudKitSharingStore(
+    containerIdentifier: containerIdentifier,
+    database: .privateDatabase
+)
+
+let zoneID = try await ownerStore.createZone(named: UUID().uuidString)
+let recordID = CKRecord.ID(recordName: model.cloudID, zoneID: zoneID)
+let record = CKRecord(recordType: "SharedItem", recordID: recordID)
+record["title"] = model.title as CKRecordValue
+try await ownerStore.save(record)
+
+let share = try await ownerStore.createShare(for: zoneID, title: model.title)
+```
+
+Present the returned `share` using SwiftUI's `CloudSharingView` and a `CKContainer(identifier: containerIdentifier)`. The system view handles participant management and the share sheet in accordance with the platform's conventions.
+
+### Accept and load a collaboration
+
+Forward the `CKShare.Metadata` delivered to your app to the owner store (or another store for the same container), then query the shared database using the invitation's zone ID:
+
+```swift
+try await ownerStore.accept(metadata)
+
+let participantStore = try CloudKitSharingStore(
+    containerIdentifier: containerIdentifier,
+    database: .sharedDatabase
+)
+let records = try await participantStore.records(
+    ofType: "SharedItem",
+    in: metadata.share.recordID.zoneID
+)
+```
+
+Merge the returned values into SwiftData on the main actor. Persist a stable CloudKit record name (for example, a UUID string) on each shared SwiftData model so subsequent saves update the same CloudKit record rather than creating duplicates.
 
 ---
 

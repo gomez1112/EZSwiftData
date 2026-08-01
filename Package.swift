@@ -5,7 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "EZSwiftData",
-    platforms: [.iOS(.v18), .macOS(.v15), .visionOS(.v2), .watchOS(.v11)],
+    platforms: [.iOS(.v26), .macOS(.v15), .visionOS(.v2), .watchOS(.v11)],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
