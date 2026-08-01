@@ -15,6 +15,10 @@ import SwiftUI
 import SwiftData
 @testable import EZSwiftData
 
+#if canImport(CloudKit)
+import CloudKit
+#endif
+
 // MARK: - Test Models
 
 @Model
@@ -195,6 +199,24 @@ final class ModelContainerFactoryTests: XCTestCase {
         XCTAssertEqual(results.count, 1)
     }
 }
+
+#if canImport(CloudKit)
+final class CloudKitSharingStoreTests: XCTestCase {
+    func testEmptyContainerIdentifierIsRejected() {
+        XCTAssertThrowsError(
+            try CloudKitSharingStore(
+                containerIdentifier: "",
+                database: .privateDatabase
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? CloudKitSharingStore.Error,
+                .emptyContainerIdentifier
+            )
+        }
+    }
+}
+#endif
 
 final class ModelContextInsertHelpersTests: XCTestCase {
     
