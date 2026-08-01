@@ -173,6 +173,22 @@ final class ModelContainerFactoryTests: XCTestCase {
     }
 
     @MainActor
+    func testCreateSeededSavesInsertedModels() throws {
+        let container = try ModelContainerFactory.createSeeded(
+            for: [TestPet.self],
+            isStoredInMemoryOnly: true
+        ) { context in
+            context.insert(TestPet(name: "Saved"))
+        }
+
+        XCTAssertFalse(container.mainContext.hasChanges)
+        XCTAssertEqual(
+            try container.mainContext.fetch(FetchDescriptor<TestPet>()).count,
+            1
+        )
+    }
+
+    @MainActor
     func testCreateSeededPropagatesSeedError() {
         XCTAssertThrowsError(
             try ModelContainerFactory.createSeeded(
@@ -197,6 +213,7 @@ final class ModelContainerFactoryTests: XCTestCase {
 
         let results = try container.mainContext.fetch(FetchDescriptor<TestPet>())
         XCTAssertEqual(results.count, 1)
+        XCTAssertFalse(container.mainContext.hasChanges)
     }
 }
 
@@ -299,6 +316,11 @@ final class DataPreviewerTests: XCTestCase {
 
         XCTAssertEqual(petsCount, expectedPets)
         XCTAssertEqual(ownersCount, expectedOwners)
+
+        let hasChanges = await MainActor.run {
+            container.mainContext.hasChanges
+        }
+        XCTAssertFalse(hasChanges)
     }
 
     func testDataPreviewerStaticContextCreationPropagatesSeedError() async {

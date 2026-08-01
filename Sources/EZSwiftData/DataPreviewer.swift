@@ -46,7 +46,9 @@ nonisolated public struct DataPreviewer<
         )
 
         try await MainActor.run {
-            try Config.seed(container.mainContext)
+            let context = container.mainContext
+            try Config.seed(context)
+            try context.save()
         }
 
         return container

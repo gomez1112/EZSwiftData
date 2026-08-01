@@ -236,7 +236,9 @@ let container = try ModelContainerFactory.createSeeded(
 }
 ```
 
-This keeps setup compact while ensuring seeding runs on the `MainActor`.
+This keeps setup compact while ensuring seeding runs on the `MainActor`. The
+factory saves the context before returning, so the container does not depend on
+autosave to persist its seed data.
 
 If your seed workflow needs async work, use the async overload:
 
@@ -297,7 +299,7 @@ import EZSwiftData
 
 This path:
 1. Builds an **in-memory** SwiftData container from `AppPreviewConfig.models`
-2. Seeds it with `AppPreviewConfig.seed(_:)`
+2. Seeds and saves it with `AppPreviewConfig.seed(_:)`
 3. Injects it via `.modelContainer(...)`
 
 **B. Seeded preview + custom dependencies (no `AnyView`)**

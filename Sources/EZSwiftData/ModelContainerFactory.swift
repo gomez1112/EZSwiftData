@@ -132,7 +132,9 @@ nonisolated public struct ModelContainerFactory {
         seed: @MainActor (ModelContext) throws -> Void
     ) throws -> ModelContainer {
         let container = try create(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly)
-        try seed(container.mainContext)
+        let context = container.mainContext
+        try seed(context)
+        try context.save()
         return container
     }
 
@@ -157,7 +159,9 @@ nonisolated public struct ModelContainerFactory {
         seed: @MainActor (ModelContext) async throws -> Void
     ) async throws -> ModelContainer {
         let container = try create(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly)
-        try await seed(container.mainContext)
+        let context = container.mainContext
+        try await seed(context)
+        try context.save()
         return container
     }
 
