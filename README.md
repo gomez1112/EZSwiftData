@@ -16,10 +16,10 @@ Small, pragmatic helpers for **SwiftData** that make it easier to:
 
 ## Requirements
 
-- Swift tools: **Swift 6.2**
+- Swift tools: **Swift 6.3** with strict concurrency
 - Platforms:
-  - iOS **26+**
-  - macOS **15+**
+  - iOS / iPadOS **27+**
+  - macOS **27+**
   - visionOS **2+**
 
 (These match the package manifest.)
@@ -29,6 +29,18 @@ Small, pragmatic helpers for **SwiftData** that make it easier to:
 ## Sharing records with other iCloud users
 
 `CloudKitSharingStore` adds Apple-native collaboration without adding a third-party dependency. SwiftData's CloudKit-backed `ModelConfiguration` synchronizes a user's private data, but does not expose `CKShare`; shared records therefore live in a dedicated CloudKit record zone. Your app explicitly translates between its SwiftData models and `CKRecord` values, which keeps local persistence and collaboration boundaries clear.
+
+> **One source of truth:** records managed by EZSwiftData's explicit sharing layer
+> must not also be managed by SwiftData automatic CloudKit synchronization. Use
+> SwiftData as a local cache:
+>
+> ```swift
+> let configuration = ModelConfiguration(
+>     "LocalCache",
+>     schema: schema,
+>     cloudKitDatabase: .none
+> )
+> ```
 
 Before using this API, enable **iCloud → CloudKit** for the consuming app target, add the container to its entitlements, and deploy the record types used below in CloudKit Console.
 
@@ -45,23 +57,33 @@ let ownerStore = try CloudKitSharingStore(
     database: .privateDatabase
 )
 
-let zoneID = try await ownerStore.createZone(named: UUID().uuidString)
+let zoneID = try await ownerStore.fetchOrCreateZone(named: UUID().uuidString)
 let recordID = CKRecord.ID(recordName: model.cloudID, zoneID: zoneID)
 let record = CKRecord(recordType: "SharedItem", recordID: recordID)
 record["title"] = model.title as CKRecordValue
 try await ownerStore.save(record)
 
-let share = try await ownerStore.createShare(for: zoneID, title: model.title)
+let share = try await ownerStore.fetchOrCreateShare(for: zoneID, title: model.title)
+guard share.url != nil else { throw CloudKitSharingError.shareURLUnavailable }
 ```
 
-Present the returned `share` using SwiftUI's `CloudSharingView` and a `CKContainer(identifier: containerIdentifier)`. The system view handles participant management and the share sheet in accordance with the platform's conventions.
+Present the server-saved share using the native system UI. It handles invitations,
+Messages and Mail destinations, participant permissions/removal, and stopping a share:
+
+```swift
+EZCloudSharingView(
+    share: share,
+    containerIdentifier: containerIdentifier,
+    availablePermissions: [.allowPrivate, .allowReadOnly, .allowReadWrite]
+)
+```
 
 ### Accept and load a collaboration
 
 Forward the `CKShare.Metadata` delivered to your app to the owner store (or another store for the same container), then query the shared database using the invitation's zone ID:
 
 ```swift
-try await ownerStore.accept(metadata)
+let accepted = try await ownerStore.accept(metadata)
 
 let participantStore = try CloudKitSharingStore(
     containerIdentifier: containerIdentifier,
@@ -69,11 +91,90 @@ let participantStore = try CloudKitSharingStore(
 )
 let records = try await participantStore.records(
     ofType: "SharedItem",
-    in: metadata.share.recordID.zoneID
+    in: accepted.zoneID
 )
 ```
 
 Merge the returned values into SwiftData on the main actor. Persist a stable CloudKit record name (for example, a UUID string) on each shared SwiftData model so subsequent saves update the same CloudKit record rather than creating duplicates.
+
+### Coordinator, invitations, and refresh
+
+```swift
+let coordinator = try CloudKitSharingCoordinator(
+    containerIdentifier: containerIdentifier,
+    configuration: .init(conflictPolicy: .newestModificationDateWins)
+)
+try await coordinator.start() // starting twice is safe
+
+for await event in coordinator.events {
+    // Convert Sendable snapshots and merge into SwiftData on MainActor.
+}
+```
+
+An SPM package cannot install lifecycle delegates in its consuming app. Retain a
+`CloudKitShareAcceptanceRouter`, forward cold-launch metadata from
+`UIScene.ConnectionOptions.cloudKitShareMetadata`, and forward warm-launch metadata
+from `windowScene(_:userDidAcceptCloudKitShareWith:)` to `await router.handle(metadata)`.
+See `Examples/EZCloudSharingSample/SceneDelegate.swift` for exact code.
+
+Forward CloudKit pushes from the app delegate's modern async
+`application(_:didReceiveRemoteNotification:)` callback to
+`processRemoteNotification(userInfo:)`. Enable **Signing & Capabilities → Background
+Modes → Remote notifications** and the correct APNs environment. Silent pushes are
+opportunistic, not immediate or guaranteed. Also call `applicationBecameActive()`
+when SwiftUI's `scenePhase` becomes active, and provide `.refreshable` for explicit
+repair. This push + foreground + manual strategy avoids continuous polling.
+
+### Entitlements and CloudKit schema
+
+Enable iCloud Drive and CloudKit, select the exact container in the app entitlement,
+and use the same bundle identity/container entitlement on both devices. Development
+builds normally use CloudKit's **Development** environment; Production is a separate
+schema. `records(ofType:in:)` uses `CKQuery`. If CloudKit reports that `recordName`
+is not queryable, open CloudKit Console, choose the correct container and environment,
+select the application's record type, and add a **QUERYABLE** index for `recordName`.
+
+### Device validation and diagnostics
+
+- Test complete invitations on two physical devices using two different Apple IDs.
+- Both devices need iCloud Drive. Do not invite the owner's own Apple ID.
+- Messages may be absent from the simulator share sheet, and participant resolution
+  may fail there. These are simulator testing limitations, not a guaranteed platform bug.
+- “Couldn't Add People” can require a physical device and a server-saved share.
+  Always validate `share.url` before presentation.
+- Account preflight is available through `validateReadiness()`; presentation-ready
+  failures distinguish authentication, permission, quota, networking, throttling,
+  partial failures, schema indexes, and container mismatches.
+
+### Conflict and deletion semantics
+
+The coordinator defaults to `serverWins`, with `clientWins`, newest-modification-date,
+and async custom policies available. Remote deletions are emitted as tombstones.
+EZSwiftData never silently deletes local user-created SwiftData objects: the app's
+main-actor merge delegate decides how tombstones affect its cache. Stopping a zone-wide
+share deletes the share record, never the zone or its owner records.
+
+### Past schema failures to avoid
+
+1. CloudKit-backed SwiftData requires declaration-site defaults for nonoptional properties.
+2. SwiftData CloudKit integration does not support unique constraints.
+3. Never put `@Attribute(.unique)` on a cached CloudKit identity.
+4. Never enable automatic SwiftData CloudKit sync for the same explicitly shared graph.
+5. Delete an old development app/store after incompatible local schema changes.
+6. Messages may not appear in the simulator.
+7. “Couldn't Add People” needs validation with a server-saved share on real devices.
+8. Validate that `share.url` is nonnil.
+9. Participant queries fail if the record type's `recordName` is not QUERYABLE.
+10. Add that index in the same Development or Production environment used by the build.
+
+### Limitations
+
+CloudKit requires entitlements, deployed schema, APNs, iCloud accounts, and physical
+devices for end-to-end validation; deterministic package tests therefore use fakes
+and never contact CloudKit. System participant UI controls which destinations are
+available. Delivery timing remains controlled by CloudKit/APNs. See
+`Examples/EZCloudSharingSample` for owner, participant, acceptance, foreground,
+notification, deletion, permission-error, offline, and retry integration points.
 
 ---
 

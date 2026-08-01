@@ -1,350 +1,77 @@
-//
-//  SwiftDataPreviewerTests.swift
-//  SwiftDataPreviewerTests
-//
-//  These tests are designed to exercise the public surface of the package.
-//  They focus on success paths and helper APIs that are safe to run in XCTest.
-//
-//  Note: Testing fatalError branches generally requires a small test hook.
-//  If you decide to add an injectable error handler to ModelContainerFactory,
-//  you can extend these tests to assert the failure path too.
-//
+import Testing
 
-import XCTest
-import SwiftUI
-import SwiftData
+#if canImport(CloudKit)
+@preconcurrency import CloudKit
 @testable import EZSwiftData
 
-#if canImport(CloudKit)
-import CloudKit
-#endif
+actor FakeCloudKitClient: CloudKitClient {
+    var status: CKAccountStatus = .available
+    var zones: [CKRecordZone.ID: CKRecordZone] = [:]
+    var records: [CKRecord.ID: CKRecord] = [:]
+    var installedSubscriptions: [CKSubscription] = []
+    var saveZoneCalls = 0
+    var saveSubscriptionCalls = 0
+    var scriptedError: (any Error)?
 
-// MARK: - Test Models
-
-@Model
-final class TestPet {
-    var name: String
-    
-    init(name: String = "") {
-        self.name = name
+    func accountStatus() async throws -> CKAccountStatus { if let scriptedError { throw scriptedError }; return status }
+    func saveZone(_ zone: CKRecordZone) async throws -> CKRecordZone { saveZoneCalls += 1; zones[zone.zoneID] = zone; return zone }
+    func zone(for id: CKRecordZone.ID) async throws -> CKRecordZone {
+        guard let zone = zones[id] else { throw CKError(.unknownItem) }; return zone
     }
-    
-    @MainActor
-    static let samples: [TestPet] = [
-        TestPet(name: "A"),
-        TestPet(name: "B"),
-        TestPet(name: "C")
-    ]
+    func allZones() async throws -> [CKRecordZone] { Array(zones.values) }
+    func deleteZone(_ id: CKRecordZone.ID) async throws { zones[id] = nil }
+    func saveRecord(_ record: CKRecord) async throws -> CKRecord { records[record.recordID] = record; return record }
+    func record(for id: CKRecord.ID) async throws -> CKRecord { guard let record = records[id] else { throw CKError(.unknownItem) }; return record }
+    func deleteRecord(_ id: CKRecord.ID) async throws { records[id] = nil }
+    func records(ofType: String, zoneID: CKRecordZone.ID) async throws -> [CKRecord] { records.values.filter { $0.recordType == ofType && $0.recordID.zoneID == zoneID } }
+    func accept(_ metadata: CKShare.Metadata) async throws -> CKShare { metadata.share }
+    func subscriptions() async throws -> [CKSubscription] { installedSubscriptions }
+    func saveSubscription(_ subscription: CKSubscription) async throws -> CKSubscription { saveSubscriptionCalls += 1; installedSubscriptions.append(subscription); return subscription }
+    func deleteSubscription(_ id: CKSubscription.ID) async throws { installedSubscriptions.removeAll { $0.subscriptionID == id } }
 }
 
-@Model
-final class TestOwner {
-    var name: String
-    
-    init(name: String = "") {
-        self.name = name
+@Suite("CloudKitSharingStore deterministic behavior")
+struct CloudKitSharingStoreTests {
+    @Test("empty container identifier") func emptyContainer() {
+        #expect(throws: CloudKitSharingError.emptyContainerIdentifier) { try CloudKitSharingStore(containerIdentifier: "", database: .privateDatabase) }
     }
-    
-    @MainActor
-    static let samples: [TestOwner] = [
-        TestOwner(name: "O1"),
-        TestOwner(name: "O2")
-    ]
-}
-
-enum TestSchemaV1: VersionedSchema {
-    static let versionIdentifier = Schema.Version(1, 0, 0)
-    static let models: [any PersistentModel.Type] = [
-        TestPet.self
-    ]
-}
-
-enum TestSchemaV2: VersionedSchema {
-    static let versionIdentifier = Schema.Version(2, 0, 0)
-    static let models: [any PersistentModel.Type] = [
-        TestPet.self,
-        TestOwner.self
-    ]
-}
-
-enum TestMigrationPlan: SchemaMigrationPlan {
-    static let schemas: [any VersionedSchema.Type] = [
-        TestSchemaV1.self,
-        TestSchemaV2.self
-    ]
-
-    static let stages: [MigrationStage] = [
-        .lightweight(fromVersion: TestSchemaV1.self, toVersion: TestSchemaV2.self)
-    ]
-}
-
-// MARK: - Preview Config for Tests
-
-enum TestPreviewConfig: SwiftDataPreviewContextConfig {
-    static let models: [any PersistentModel.Type] = [
-        TestPet.self,
-        TestOwner.self
-    ]
-    
-    @MainActor
-    static func seed(_ context: ModelContext) throws {
-        context.insert(TestPet.samples)
-        context.insert(TestOwner.samples)
+    @Test("empty zone name") func emptyZone() async throws {
+        let store = try CloudKitSharingStore(containerIdentifier: "iCloud.test", database: .privateDatabase, client: FakeCloudKitClient())
+        await #expect(throws: CloudKitSharingError.emptyZoneName) { try await store.fetchOrCreateZone(named: "") }
+    }
+    @Test("empty record type") func emptyRecordType() async throws {
+        let store = try CloudKitSharingStore(containerIdentifier: "iCloud.test", database: .privateDatabase, client: FakeCloudKitClient())
+        await #expect(throws: CloudKitSharingError.emptyRecordType) { try await store.records(ofType: "", in: .init(zoneName: "z")) }
+    }
+    @Test("private-only operation rejects shared database") func privateOnly() async throws {
+        let store = try CloudKitSharingStore(containerIdentifier: "iCloud.test", database: .sharedDatabase, client: FakeCloudKitClient())
+        await #expect(throws: CloudKitSharingError.operationRequiresPrivateDatabase) { try await store.fetchOrCreateZone(named: "z") }
+    }
+    @Test("fetch-or-create creates an absent zone once") func createsZone() async throws {
+        let fake = FakeCloudKitClient(); let store = try CloudKitSharingStore(containerIdentifier: "iCloud.test", database: .privateDatabase, client: fake)
+        _ = try await store.fetchOrCreateZone(named: "z"); _ = try await store.fetchOrCreateZone(named: "z")
+        #expect(await fake.saveZoneCalls == 1)
+    }
+    @Test("share without server URL is rejected") func missingShareURL() async throws {
+        let fake = FakeCloudKitClient(); let zone = CKRecordZone.ID(zoneName: "z")
+        let share = CKShare(recordZoneID: zone); _ = try await fake.saveRecord(share)
+        let store = try CloudKitSharingStore(containerIdentifier: "iCloud.test", database: .privateDatabase, client: fake)
+        await #expect(throws: CloudKitSharingError.shareURLUnavailable) { try await store.fetchOrCreateShare(for: zone, title: nil) }
+    }
+    @Test("account unavailable appears in readiness") func accountUnavailable() async throws {
+        let fake = FakeCloudKitClient(); await fake.setStatus(.noAccount)
+        let store = try CloudKitSharingStore(containerIdentifier: "iCloud.test", database: .privateDatabase, client: fake)
+        let readiness = await store.validateReadiness()
+        #expect(!readiness.canCreateShares); #expect(readiness.issues == [.noAccount])
+    }
+    @Test("subscription installation is idempotent") func subscriptions() async throws {
+        let fake = FakeCloudKitClient(); let store = try CloudKitSharingStore(containerIdentifier: "iCloud.test", database: .privateDatabase, client: fake)
+        try await store.installSubscriptions(); try await store.installSubscriptions()
+        #expect(await fake.saveSubscriptionCalls == 1)
     }
 }
 
-enum ThrowingPreviewConfig: SwiftDataPreviewContextConfig {
-    enum SeedError: Swift.Error, Equatable {
-        case failed
-    }
-
-    static let models: [any PersistentModel.Type] = [
-        TestPet.self
-    ]
-
-    @MainActor
-    static func seed(_ context: ModelContext) throws {
-        let _ = context
-        throw SeedError.failed
-    }
-}
-
-// MARK: - Dependencies Modifier for Tests
-
-struct TestPreviewDependencies: ViewModifier {
-    let context: ModelContext
-    
-    func body(content: Content) -> some View {
-        // Keep this minimal; we just want to validate it can be constructed.
-        let _ = context
-        return content
-    }
-}
-
-// MARK: - Tests
-
-final class ModelContainerFactoryTests: XCTestCase {
-
-    enum TestSeedError: Swift.Error, Equatable {
-        case failed
-    }
-
-    @MainActor
-    func testCreateSharedContainerWithVariadicModels() throws {
-        let container = try ModelContainerFactory.create(
-            TestPet.self,
-            TestOwner.self
-        )
-        
-        // Assert the container provides a valid main context.
-        XCTAssertNotNil(container.mainContext)
-    }
-
-    @MainActor
-    func testCreateInMemoryContainerViaCreateFlag() throws {
-        let container = try ModelContainerFactory.create(
-            for: [TestPet.self, TestOwner.self],
-            isStoredInMemoryOnly: true
-        )
-        
-        XCTAssertNotNil(container.mainContext)
-    }
-
-    @MainActor
-    func testCreateContainerForVersionedSchema() throws {
-        let container = try ModelContainerFactory.create(
-            for: TestSchemaV2.self,
-            isStoredInMemoryOnly: true
-        )
-
-        XCTAssertEqual(container.schema.version, TestSchemaV2.versionIdentifier)
-        XCTAssertNil(container.migrationPlan)
-    }
-
-    @MainActor
-    func testCreateContainerWithMigrationPlan() throws {
-        let container = try ModelContainerFactory.create(
-            migrationPlan: TestMigrationPlan.self,
-            isStoredInMemoryOnly: true
-        )
-
-        XCTAssertEqual(container.schema.version, TestSchemaV2.versionIdentifier)
-        XCTAssertTrue(container.migrationPlan == TestMigrationPlan.self)
-    }
-
-    @MainActor
-    func testCreateSeededSavesInsertedModels() throws {
-        let container = try ModelContainerFactory.createSeeded(
-            for: [TestPet.self],
-            isStoredInMemoryOnly: true
-        ) { context in
-            context.insert(TestPet(name: "Saved"))
-        }
-
-        XCTAssertFalse(container.mainContext.hasChanges)
-        XCTAssertEqual(
-            try container.mainContext.fetch(FetchDescriptor<TestPet>()).count,
-            1
-        )
-    }
-
-    @MainActor
-    func testCreateSeededPropagatesSeedError() {
-        XCTAssertThrowsError(
-            try ModelContainerFactory.createSeeded(
-                for: [TestPet.self],
-                isStoredInMemoryOnly: true
-            ) { _ in
-                throw TestSeedError.failed
-            }
-        ) { error in
-            XCTAssertEqual(error as? TestSeedError, .failed)
-        }
-    }
-
-    @MainActor
-    func testCreateSeededAsyncSeedsData() async throws {
-        let container = try await ModelContainerFactory.createSeeded(
-            for: [TestPet.self],
-            isStoredInMemoryOnly: true
-        ) { context in
-            context.insert(TestPet(name: "Async"))
-        }
-
-        let results = try container.mainContext.fetch(FetchDescriptor<TestPet>())
-        XCTAssertEqual(results.count, 1)
-        XCTAssertFalse(container.mainContext.hasChanges)
-    }
-}
-
-#if canImport(CloudKit)
-final class CloudKitSharingStoreTests: XCTestCase {
-    func testEmptyContainerIdentifierIsRejected() {
-        XCTAssertThrowsError(
-            try CloudKitSharingStore(
-                containerIdentifier: "",
-                database: .privateDatabase
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? CloudKitSharingStore.Error,
-                .emptyContainerIdentifier
-            )
-        }
-    }
+private extension FakeCloudKitClient {
+    func setStatus(_ value: CKAccountStatus) { status = value }
 }
 #endif
-
-final class ModelContextInsertHelpersTests: XCTestCase {
-    
-    @MainActor
-    func testInsertSequenceHelper() throws {
-        let container = try ModelContainerFactory.createTestInMemory(
-            models: [TestPet.self]
-        )
-        let context = container.mainContext
-        
-        context.insert(TestPet.samples)
-        
-        // Fetch to verify inserts.
-        let descriptor = FetchDescriptor<TestPet>()
-        let results = try context.fetch(descriptor)
-        let expectedCount = TestPet.samples.count
-        XCTAssertEqual(results.count, expectedCount)
-    }
-    
-    @MainActor
-    func testInsertVariadicHelper() throws {
-        let container = try ModelContainerFactory.createTestInMemory(
-            models: [TestPet.self]
-        )
-        let context = container.mainContext
-        
-        let p1 = TestPet(name: "X")
-        let p2 = TestPet(name: "Y")
-        context.insert(p1, p2)
-        
-        let descriptor = FetchDescriptor<TestPet>()
-        let results = try context.fetch(descriptor)
-        XCTAssertEqual(results.count, 2)
-    }
-}
-
-final class PreviewTraitConvenienceTests: XCTestCase {
-    
-    @MainActor func testSeededTraitBuilds() {
-        // This is a lightweight compile-time + runtime sanity check.
-        let trait = PreviewTrait.seeded(TestPreviewConfig.self)
-        XCTAssertNotNil(trait)
-    }
-    
-    @MainActor func testDevTraitBuilds() {
-        let modifier: @MainActor (ModelContext) -> TestPreviewDependencies = { ctx in
-            TestPreviewDependencies(context: ctx)
-        }
-        let trait = PreviewTrait.dev(TestPreviewConfig.self, modifier)
-        XCTAssertNotNil(trait)
-    }
-
-    @MainActor func testDevTraitSupportsTrailingClosure() {
-        let trait = PreviewTrait.dev(TestPreviewConfig.self) { context in
-            TestPreviewDependencies(context: context)
-        }
-
-        XCTAssertNotNil(trait)
-    }
-}
-
-final class DataPreviewerTests: XCTestCase {
-    
-    func testDataPreviewerStaticContextCreation() async throws {
-        // Ensure the PreviewModifier's shared context can be produced.
-        let container = try await DataPreviewer<TestPreviewConfig, EmptyModifier>.makeSharedContext()
-
-        // Access ModelContext and perform fetches on the main actor to avoid crossing isolation.
-        let (petsCount, ownersCount): (Int, Int) = await MainActor.run {
-            let context = container.mainContext
-            let pets = try? context.fetch(FetchDescriptor<TestPet>())
-            let owners = try? context.fetch(FetchDescriptor<TestOwner>())
-            return (pets?.count ?? 0, owners?.count ?? 0)
-        }
-
-        // Read sample counts on the main actor as well to avoid nonisolated autoclosure capture.
-        let (expectedPets, expectedOwners): (Int, Int) = await MainActor.run {
-            (TestPet.samples.count, TestOwner.samples.count)
-        }
-
-        XCTAssertEqual(petsCount, expectedPets)
-        XCTAssertEqual(ownersCount, expectedOwners)
-
-        let hasChanges = await MainActor.run {
-            container.mainContext.hasChanges
-        }
-        XCTAssertFalse(hasChanges)
-    }
-
-    func testDataPreviewerStaticContextCreationPropagatesSeedError() async {
-        do {
-            _ = try await DataPreviewer<ThrowingPreviewConfig, EmptyModifier>.makeSharedContext()
-            XCTFail("Expected seed error to be thrown")
-        } catch let error as ThrowingPreviewConfig.SeedError {
-            XCTAssertEqual(error, .failed)
-        } catch {
-            XCTFail("Unexpected error type: \(error)")
-        }
-    }
-}
-
-// MARK: - Test-only helper to avoid duplicating in-memory setup
-
-private extension ModelContainerFactory {
-    @MainActor
-    static func createTestInMemory(
-        models: [any PersistentModel.Type]
-    ) throws -> ModelContainer {
-        // We purposely call the same public API to keep behavior aligned.
-        // This is kept in tests to avoid encouraging a public in-memory API
-        // in production if you don't want it.
-        return try create(for: models, isStoredInMemoryOnly: true)
-    }
-}

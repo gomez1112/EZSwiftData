@@ -1,11 +1,11 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.3
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
 
 let package = Package(
     name: "EZSwiftData",
-    platforms: [.iOS(.v26), .macOS(.v15), .visionOS(.v2), .watchOS(.v11)],
+    platforms: [.iOS("27.0"), .macOS("27.0"), .visionOS(.v2), .watchOS(.v11)],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
@@ -17,7 +17,10 @@ let package = Package(
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "EZSwiftData"
+            name: "EZSwiftData",
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
         ),
         .testTarget(
             name: "EZSwiftDataTests",
