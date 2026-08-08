@@ -121,6 +121,34 @@ struct TestPreviewDependencies: ViewModifier {
     }
 }
 
+struct ThrowingTestPreviewDependencies: ViewModifier {
+    enum BuildError: Swift.Error, Equatable {
+        case failed
+    }
+
+    let context: ModelContext
+
+    @MainActor
+    init(context: ModelContext, shouldFail: Bool = false) throws {
+        if shouldFail {
+            throw BuildError.failed
+        }
+        self.context = context
+    }
+
+    func body(content: Content) -> some View {
+        content
+    }
+}
+
+struct TestPreviewContent: View {
+    let petCount: Int
+
+    var body: some View {
+        Text(petCount, format: .number)
+    }
+}
+
 // MARK: - Tests
 
 final class ModelContainerFactoryTests: XCTestCase {
@@ -293,6 +321,14 @@ final class PreviewTraitConvenienceTests: XCTestCase {
 
         XCTAssertNotNil(trait)
     }
+
+    @MainActor func testDevTraitSupportsThrowingDependencyBuilder() {
+        let trait = PreviewTrait.dev(TestPreviewConfig.self) { context in
+            try ThrowingTestPreviewDependencies(context: context)
+        }
+
+        XCTAssertNotNil(trait)
+    }
 }
 
 final class DataPreviewerTests: XCTestCase {
@@ -331,6 +367,78 @@ final class DataPreviewerTests: XCTestCase {
             XCTAssertEqual(error, .failed)
         } catch {
             XCTFail("Unexpected error type: \(error)")
+        }
+    }
+
+    @MainActor
+    func testThrowingDependencyBuilderSucceeds() throws {
+        let container = try ModelContainerFactory.create(
+            for: TestPreviewConfig.models,
+            isStoredInMemoryOnly: true
+        )
+        let modifier = try DataPreviewer<
+            TestPreviewConfig,
+            ThrowingTestPreviewDependencies
+        >.buildModifier(using: { context in
+            try ThrowingTestPreviewDependencies(context: context)
+        }, context: container.mainContext)
+
+        XCTAssertTrue(modifier.context === container.mainContext)
+    }
+
+    @MainActor
+    func testThrowingDependencyBuilderPropagatesFailureToPreviewBoundary() throws {
+        let container = try ModelContainerFactory.create(
+            for: TestPreviewConfig.models,
+            isStoredInMemoryOnly: true
+        )
+
+        XCTAssertThrowsError(
+            try DataPreviewer<
+                TestPreviewConfig,
+                ThrowingTestPreviewDependencies
+            >.buildModifier(using: { context in
+                try ThrowingTestPreviewDependencies(
+                    context: context,
+                    shouldFail: true
+                )
+            }, context: container.mainContext)
+        ) { error in
+            XCTAssertEqual(
+                error as? ThrowingTestPreviewDependencies.BuildError,
+                .failed
+            )
+        }
+    }
+}
+
+final class SwiftDataPreviewTests: XCTestCase {
+    @MainActor
+    func testContentBuilderReceivesSeededContext() throws {
+        let (_, content) = try SwiftDataPreview<
+            TestPreviewConfig,
+            TestPreviewContent
+        >.makeContent(TestPreviewConfig.self) { context in
+            let pets = try context.fetch(FetchDescriptor<TestPet>())
+            return TestPreviewContent(petCount: pets.count)
+        }
+
+        XCTAssertEqual(content.petCount, TestPet.samples.count)
+    }
+
+    @MainActor
+    func testThrowingContentBuilderPropagatesFailureToPreviewBoundary() {
+        XCTAssertThrowsError(
+            try SwiftDataPreview<TestPreviewConfig, Text>.makeContent(
+                TestPreviewConfig.self
+            ) { _ in
+                throw ThrowingTestPreviewDependencies.BuildError.failed
+            }
+        ) { error in
+            XCTAssertEqual(
+                error as? ThrowingTestPreviewDependencies.BuildError,
+                .failed
+            )
         }
     }
 }

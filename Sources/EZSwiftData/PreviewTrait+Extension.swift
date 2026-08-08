@@ -21,13 +21,15 @@ public extension PreviewTrait where T == Preview.ViewTraits {
     /// A seeded SwiftData preview that applies a custom ViewModifier
     /// built from the preview `ModelContext`.
     ///
+    /// The builder may throw; failures are reported at the preview boundary.
+    ///
     /// This is your “infinite dependencies” path without `AnyView`.
     static func dev<
         Config: SwiftDataPreviewContextConfig,
         VM: ViewModifier
     >(
         _ config: Config.Type,
-        _ modifier: @escaping @MainActor (ModelContext) -> VM
+        _ modifier: @escaping @MainActor (ModelContext) throws -> VM
     ) -> PreviewTrait {
         .modifier(DataPreviewer<Config, VM>(modifier: modifier))
     }

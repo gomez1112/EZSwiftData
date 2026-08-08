@@ -29,20 +29,39 @@ nonisolated public struct ModelContainerFactory {
         for models: [any PersistentModel.Type],
         isStoredInMemoryOnly: Bool = false
     ) throws -> ModelContainer {
+        return try create(
+            for: models,
+            configuration: { schema in
+                ModelConfiguration(
+                    schema: schema,
+                    isStoredInMemoryOnly: isStoredInMemoryOnly
+                )
+            }
+        )
+    }
+
+    /// Creates a `ModelContainer` using a native SwiftData configuration.
+    ///
+    /// The builder receives the exact schema passed to `ModelContainer`, which
+    /// keeps custom store settings aligned with the requested model types.
+    ///
+    /// - Parameters:
+    ///   - models: The persistent model types included in the schema.
+    ///   - configuration: A builder returning the native `ModelConfiguration`.
+    @MainActor
+    public static func create(
+        for models: [any PersistentModel.Type],
+        configuration: (Schema) -> ModelConfiguration
+    ) throws -> ModelContainer {
         guard !models.isEmpty else {
             throw Error.emptyModelList
         }
 
         let schema = Schema(models)
-        let configuration = ModelConfiguration(
-            schema: schema,
-            isStoredInMemoryOnly: isStoredInMemoryOnly
-        )
-
         return try create(
             for: schema,
             migrationPlan: nil,
-            configuration: configuration
+            configuration: configuration(schema)
         )
     }
 
@@ -59,16 +78,36 @@ nonisolated public struct ModelContainerFactory {
         migrationPlan: (any SchemaMigrationPlan.Type)? = nil,
         isStoredInMemoryOnly: Bool = false
     ) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: versionedSchema)
-        let configuration = ModelConfiguration(
-            schema: schema,
-            isStoredInMemoryOnly: isStoredInMemoryOnly
+        try create(
+            for: versionedSchema,
+            migrationPlan: migrationPlan,
+            configuration: { schema in
+                ModelConfiguration(
+                    schema: schema,
+                    isStoredInMemoryOnly: isStoredInMemoryOnly
+                )
+            }
         )
+    }
 
+    /// Creates a `ModelContainer` for a versioned schema using a native
+    /// SwiftData configuration.
+    ///
+    /// - Parameters:
+    ///   - versionedSchema: The current version of the schema to load.
+    ///   - migrationPlan: An optional plan for migrating older stores.
+    ///   - configuration: A builder that receives the resolved versioned schema.
+    @MainActor
+    public static func create<SchemaVersion: VersionedSchema>(
+        for versionedSchema: SchemaVersion.Type,
+        migrationPlan: (any SchemaMigrationPlan.Type)? = nil,
+        configuration: (Schema) -> ModelConfiguration
+    ) throws -> ModelContainer {
+        let schema = Schema(versionedSchema: versionedSchema)
         return try create(
             for: schema,
             migrationPlan: migrationPlan,
-            configuration: configuration
+            configuration: configuration(schema)
         )
     }
 
@@ -82,14 +121,37 @@ nonisolated public struct ModelContainerFactory {
         migrationPlan: MigrationPlan.Type,
         isStoredInMemoryOnly: Bool = false
     ) throws -> ModelContainer {
+        return try create(
+            migrationPlan: migrationPlan,
+            configuration: { schema in
+                ModelConfiguration(
+                    schema: schema,
+                    isStoredInMemoryOnly: isStoredInMemoryOnly
+                )
+            }
+        )
+    }
+
+    /// Creates a `ModelContainer` using the latest schema in a migration plan
+    /// and a native SwiftData configuration.
+    ///
+    /// - Parameters:
+    ///   - migrationPlan: The migration plan describing the schema evolution.
+    ///   - configuration: A builder that receives the plan's latest schema.
+    @MainActor
+    public static func create<MigrationPlan: SchemaMigrationPlan>(
+        migrationPlan: MigrationPlan.Type,
+        configuration: (Schema) -> ModelConfiguration
+    ) throws -> ModelContainer {
         guard let currentSchema = migrationPlan.schemas.last else {
             throw Error.emptyMigrationPlan
         }
 
+        let schema = Schema(versionedSchema: currentSchema)
         return try create(
-            for: currentSchema,
+            for: schema,
             migrationPlan: migrationPlan,
-            isStoredInMemoryOnly: isStoredInMemoryOnly
+            configuration: configuration(schema)
         )
     }
 
@@ -138,6 +200,25 @@ nonisolated public struct ModelContainerFactory {
         return container
     }
 
+    /// Creates a custom-configured `ModelContainer`, then immediately seeds it.
+    ///
+    /// - Parameters:
+    ///   - models: The persistent model types included in the schema.
+    ///   - configuration: A builder returning the native `ModelConfiguration`.
+    ///   - seed: The synchronous seeding closure, executed on the `MainActor`.
+    @MainActor
+    public static func createSeeded(
+        for models: [any PersistentModel.Type],
+        configuration: (Schema) -> ModelConfiguration,
+        seed: @MainActor (ModelContext) throws -> Void
+    ) throws -> ModelContainer {
+        let container = try create(for: models, configuration: configuration)
+        let context = container.mainContext
+        try seed(context)
+        try context.save()
+        return container
+    }
+
     /// Variadic convenience overload for `createSeeded`.
     @MainActor
     public static func createSeeded(
@@ -159,6 +240,25 @@ nonisolated public struct ModelContainerFactory {
         seed: @MainActor (ModelContext) async throws -> Void
     ) async throws -> ModelContainer {
         let container = try create(for: models, isStoredInMemoryOnly: isStoredInMemoryOnly)
+        let context = container.mainContext
+        try await seed(context)
+        try context.save()
+        return container
+    }
+
+    /// Creates a custom-configured `ModelContainer`, then asynchronously seeds it.
+    ///
+    /// - Parameters:
+    ///   - models: The persistent model types included in the schema.
+    ///   - configuration: A builder returning the native `ModelConfiguration`.
+    ///   - seed: The asynchronous seeding closure, executed on the `MainActor`.
+    @MainActor
+    public static func createSeeded(
+        for models: [any PersistentModel.Type],
+        configuration: (Schema) -> ModelConfiguration,
+        seed: @MainActor (ModelContext) async throws -> Void
+    ) async throws -> ModelContainer {
+        let container = try create(for: models, configuration: configuration)
         let context = container.mainContext
         try await seed(context)
         try context.save()
