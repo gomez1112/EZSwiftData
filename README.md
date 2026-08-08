@@ -314,23 +314,58 @@ import SwiftData
 import EZSwiftData
 
 struct PreviewDependencies: ViewModifier {
-    let context: ModelContext
+    let momentsViewModel: MomentsViewModel
+    let badgeViewModel: BadgeViewModel
+
+    init(context: ModelContext) throws {
+        momentsViewModel = try MomentsViewModel(modelContainer: context.container)
+        badgeViewModel = try BadgeViewModel(modelContainer: context.container)
+    }
 
     func body(content: Content) -> some View {
         content
-            // Example: Inject anything you need for previews.
-            // .environment(\.myFeatureFlags, .preview)
-            // .environment(MyService.self, .mock)
+            .environment(momentsViewModel)
+            .environment(badgeViewModel)
     }
 }
 
-// Cleaner call-site (unlabeled closure)
 #Preview("Dev", traits: .dev(AppPreviewConfig.self) { context in
-    PreviewDependencies(context: context)
+    try PreviewDependencies(context: context)
 }) {
     ContentView()
 }
 ```
+
+The dependency builder may throw. EZSwiftData catches errors at the preview
+boundary and reports that the SwiftData preview dependencies could not be
+created. Existing non-throwing `.dev` builders remain valid.
+
+**C. Initializer-injected preview dependencies**
+
+SwiftUI preview traits cannot pass their shared context into the separate
+`#Preview` content closure. Use `SwiftDataPreview` when the previewed view takes
+dependencies through its initializer. It follows the same in-memory creation,
+seeding, saving, and model-container injection path while making the seeded
+`ModelContext` available to a throwing content builder:
+
+```swift
+#Preview("Achievement content") {
+    SwiftDataPreview(AppPreviewConfig.self) { context in
+        AchievementContentStack(
+            momentsViewModel: try MomentsViewModel(
+                modelContainer: context.container
+            ),
+            badgeViewModel: try BadgeViewModel(
+                modelContainer: context.container
+            )
+        )
+    }
+}
+```
+
+EZSwiftData catches container, seeding, and content-construction failures at
+the helper boundary and displays a clear preview failure instead of requiring a
+wrapper view or repeated `do`/`catch` blocks.
 
 **Why this design?**
 - You get **infinite dependencies** by composing a single concrete `ViewModifier`
