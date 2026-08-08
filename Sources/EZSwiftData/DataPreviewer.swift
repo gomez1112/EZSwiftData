@@ -26,14 +26,14 @@ nonisolated public struct DataPreviewer<
 
     public typealias Context = ModelContainer
 
-    private let modifierBuilder: @MainActor (ModelContext) -> VM
+    private let modifierBuilder: @MainActor (ModelContext) throws -> VM
 
     /// Initializes the preview helper.
     ///
     /// - Parameter modifier: A closure that creates a concrete `ViewModifier`
     ///   containing your environments and any other preview-only tweaks.
     public init(
-        modifier: @escaping @MainActor (ModelContext) -> VM
+        modifier: @escaping @MainActor (ModelContext) throws -> VM
     ) {
         self.modifierBuilder = modifier
     }
@@ -56,10 +56,27 @@ nonisolated public struct DataPreviewer<
 
     @MainActor
     public func body(content: Content, context: ModelContainer) -> some View {
-        Group {
-            content
-                .modifier(modifierBuilder(context.mainContext))
+        do {
+            let modifier = try Self.buildModifier(
+                using: modifierBuilder,
+                context: context.mainContext
+            )
+
+            return Group {
+                content
+                    .modifier(modifier)
+            }
+            .modelContainer(context)
+        } catch {
+            fatalError("Failed to create SwiftData preview dependencies: \(error)")
         }
-        .modelContainer(context)
+    }
+
+    @MainActor
+    static func buildModifier(
+        using builder: (ModelContext) throws -> VM,
+        context: ModelContext
+    ) throws -> VM {
+        try builder(context)
     }
 }
