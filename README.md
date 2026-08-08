@@ -124,6 +124,102 @@ let container = try ModelContainerFactory.create(
 )
 ```
 
+#### Advanced `ModelConfiguration`
+
+The factory uses progressive disclosure: the variadic overload is the simplest
+production path, `isStoredInMemoryOnly` covers previews and tests, and a
+`configuration` builder exposes SwiftData's complete native configuration API
+when an app needs more control.
+
+The builder receives the exact `Schema` that EZSwiftData passes to
+`ModelContainer`. Return a native `ModelConfiguration` built with that schema:
+
+```swift
+@MainActor
+let localContainer = try ModelContainerFactory.create(
+    for: [Pet.self, Owner.self]
+) { schema in
+    ModelConfiguration(
+        schema: schema,
+        cloudKitDatabase: .none
+    )
+}
+```
+
+This explicitly disables SwiftData's automatic CloudKit synchronization for
+that store. Use `.automatic` or another native
+`ModelConfiguration.CloudKitDatabase` option when automatic SwiftData syncing
+is desired.
+
+Because the closure returns Apple's type directly, all configuration features
+supported by the current SDK remain available without EZSwiftData adding a
+parallel abstraction. For example, a named, app-group-backed configuration can
+be created directly:
+
+```swift
+@MainActor
+let sharedContainer = try ModelContainerFactory.create(
+    for: [Pet.self, Owner.self]
+) { schema in
+    ModelConfiguration(
+        "SharedModels",
+        schema: schema,
+        allowsSave: true,
+        groupContainer: .identifier("group.com.example.MyApp"),
+        cloudKitDatabase: .none
+    )
+}
+```
+
+The same escape hatch works with versioned schemas and migration plans:
+
+```swift
+@MainActor
+let migratedContainer = try ModelContainerFactory.create(
+    for: AppSchemaV2.self,
+    migrationPlan: AppMigrationPlan.self
+) { schema in
+    ModelConfiguration(
+        schema: schema,
+        cloudKitDatabase: .none
+    )
+}
+
+@MainActor
+let latestContainer = try ModelContainerFactory.create(
+    migrationPlan: AppMigrationPlan.self
+) { schema in
+    ModelConfiguration(
+        schema: schema,
+        cloudKitDatabase: .none
+    )
+}
+```
+
+Custom configurations also compose with synchronous or asynchronous seeding:
+
+```swift
+@MainActor
+let previewContainer = try ModelContainerFactory.createSeeded(
+    for: [Pet.self, Owner.self],
+    configuration: { schema in
+        ModelConfiguration(
+            schema: schema,
+            isStoredInMemoryOnly: true,
+            cloudKitDatabase: .none
+        )
+    }
+) { context in
+    context.insert(Pet(name: "Mango"))
+}
+```
+
+`CloudKitSharingStore` and SwiftData CloudKit serve different persistence
+paths. An app that explicitly manages `CKRecord` and `CKShare` collaboration
+with `CloudKitSharingStore` can use `cloudKitDatabase: .none` for its SwiftData
+configuration, keeping that SwiftData store local instead of also enabling
+SwiftData's automatic CloudKit synchronization.
+
 #### Migration-aware containers
 
 If your app uses `VersionedSchema` and `SchemaMigrationPlan`, EZSwiftData can create the container with the migration plan attached:
