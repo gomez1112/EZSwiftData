@@ -7,6 +7,16 @@ private enum EmptyTestMigrationPlan: SchemaMigrationPlan {
     static let stages: [MigrationStage] = []
 }
 
+private enum EmptyTestSchema: VersionedSchema {
+    static let versionIdentifier = Schema.Version(1, 0, 0)
+    static let models: [any PersistentModel.Type] = []
+}
+
+private enum MigrationPlanWithEmptyCurrentSchema: SchemaMigrationPlan {
+    static let schemas: [any VersionedSchema.Type] = [EmptyTestSchema.self]
+    static let stages: [MigrationStage] = []
+}
+
 @Suite("ModelContainerFactory configurations", .serialized)
 @MainActor
 struct ModelContainerConfigurationTests {
@@ -177,6 +187,26 @@ struct ModelContainerConfigurationTests {
             ) { schema in
                 ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             }
+        }
+    }
+
+    @Test("An empty versioned schema fails consistently")
+    func emptyVersionedSchema() {
+        #expect(throws: ModelContainerFactory.Error.emptyModelList) {
+            try ModelContainerFactory.create(
+                for: EmptyTestSchema.self,
+                isStoredInMemoryOnly: true
+            )
+        }
+    }
+
+    @Test("A migration plan whose current schema is empty fails consistently")
+    func migrationPlanWithEmptyCurrentSchema() {
+        #expect(throws: ModelContainerFactory.Error.emptyModelList) {
+            try ModelContainerFactory.create(
+                migrationPlan: MigrationPlanWithEmptyCurrentSchema.self,
+                isStoredInMemoryOnly: true
+            )
         }
     }
 

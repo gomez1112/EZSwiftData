@@ -694,7 +694,8 @@ public actor CloudKitSharingCoordinator {
             state.sharedDatabaseToken = databaseChanges.token
         }
 
-        for zone in databaseChanges.deletedZoneIDs {
+        let deletedZones = Set(databaseChanges.deletedZoneIDs)
+        for zone in deletedZones {
             switch scope {
             case .privateDatabase: state.privateZoneTokens.removeValue(forKey: zone)
             case .sharedDatabase: state.zoneTokens.removeValue(forKey: zone)
@@ -703,28 +704,33 @@ public actor CloudKitSharingCoordinator {
                 output.yield(.collaborationRemoved(zone))
             }
         }
+        // A zone can be reported more than once across paginated database-change
+        // callbacks, and a later deletion supersedes an earlier change. Passing
+        // either duplicate or deleted IDs to the zone-change operation can make
+        // the entire synchronization fail instead of processing the live zones.
+        let changedZones = Array(Set(databaseChanges.changedZoneIDs).subtracting(deletedZones))
         if scope == .sharedDatabase {
-            for zone in databaseChanges.changedZoneIDs
+            for zone in changedZones
             where state.knownSharedZoneKeys.insert(zone).inserted {
                 output.yield(.collaborationAdded(zone))
             }
         }
-        guard !databaseChanges.changedZoneIDs.isEmpty else { return }
+        guard !changedZones.isEmpty else { return }
 
         let changes: CloudKitZoneChanges
         let zoneTokens = scope == .privateDatabase ? state.privateZoneTokens : state.zoneTokens
         do {
             changes = try await client.fetchRecordZoneChanges(
-                scope: scope, zoneIDs: databaseChanges.changedZoneIDs, tokens: zoneTokens)
+                scope: scope, zoneIDs: changedZones, tokens: zoneTokens)
         } catch let error as CKError where error.code == .changeTokenExpired {
-            for zone in databaseChanges.changedZoneIDs {
+            for zone in changedZones {
                 switch scope {
                 case .privateDatabase: state.privateZoneTokens.removeValue(forKey: zone)
                 case .sharedDatabase: state.zoneTokens.removeValue(forKey: zone)
                 }
             }
             changes = try await client.fetchRecordZoneChanges(
-                scope: scope, zoneIDs: databaseChanges.changedZoneIDs, tokens: [:])
+                scope: scope, zoneIDs: changedZones, tokens: [:])
         }
         switch scope {
         case .privateDatabase: state.privateZoneTokens.merge(changes.tokens) { _, new in new }
