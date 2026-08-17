@@ -2,6 +2,7 @@
 import CloudKit
 import EZSwiftData
 import EZSwiftDataCloudKit
+import Foundation
 import SwiftData
 import XCTest
 
@@ -15,6 +16,39 @@ private final class CloudKitTestModel {
 }
 
 final class CloudKitSharingStoreTests: XCTestCase {
+    func testLegacySyncStateDecodingDefaultsPrivateZoneTokens() throws {
+        let legacyState = """
+            {
+              "zoneTokens": [],
+              "knownSharedZoneKeys": []
+            }
+            """
+
+        let state = try JSONDecoder().decode(
+            CloudKitSyncState.self,
+            from: Data(legacyState.utf8)
+        )
+
+        XCTAssertTrue(state.zoneTokens.isEmpty)
+        XCTAssertTrue(state.privateZoneTokens.isEmpty)
+    }
+
+    func testSyncStateRoundTripKeepsDatabaseZoneTokensSeparate() throws {
+        let zone = CloudKitZoneIdentity(zoneName: "Collaboration", ownerName: "Owner")
+        let sharedToken = CloudKitChangeToken(data: Data("shared".utf8))
+        let privateToken = CloudKitChangeToken(data: Data("private".utf8))
+        let state = CloudKitSyncState(
+            zoneTokens: [zone: sharedToken],
+            privateZoneTokens: [zone: privateToken]
+        )
+
+        let encoded = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(CloudKitSyncState.self, from: encoded)
+
+        XCTAssertEqual(decoded.zoneTokens[zone], sharedToken)
+        XCTAssertEqual(decoded.privateZoneTokens[zone], privateToken)
+    }
+
     func testEmptyContainerIdentifierIsRejected() {
         XCTAssertThrowsError(
             try CloudKitSharingStore(
