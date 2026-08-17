@@ -41,6 +41,7 @@ public actor CloudKitSharingStore {
 
     private let container: CKContainer
     private let database: CKDatabase
+    private let client: any CloudKitClient
 
     /// Creates a store backed by an app's CloudKit container.
     ///
@@ -66,6 +67,7 @@ public actor CloudKitSharingStore {
         case .sharedDatabase:
             container.sharedCloudDatabase
         }
+        self.client = LiveCloudKitClient(containerIdentifier: containerIdentifier)
     }
 
     /// Creates the custom record zone that represents one collaboration.
@@ -93,7 +95,22 @@ public actor CloudKitSharingStore {
     /// `CKRecord.Reference` values in the same zone.
     @discardableResult
     public func save(_ record: CKRecord) async throws -> CKRecord {
-        try await database.save(record)
+        let results = try await save([record])
+        guard let result = results.first else { throw Error.shareWasNotSaved }
+        switch result.result {
+        case let .success(snapshot):
+            guard let snapshot else { throw Error.shareWasNotSaved }
+            return try snapshot.record()
+        case let .failure(error): throw error
+        }
+    }
+
+    /// Saves records in CloudKit's maximum 400-item operation chunks. Each
+    /// returned result belongs to one input record, so partial failures retain
+    /// every successful save.
+    public func save(_ records: [CKRecord]) async throws -> [CloudKitBatchItemResult] {
+        let snapshots = try records.map(CloudKitRecordSnapshot.init)
+        return try await client.save(records: snapshots, scope: databaseKind.syncScope)
     }
 
     /// Fetches one shared or private record by identifier.
@@ -140,7 +157,13 @@ public actor CloudKitSharingStore {
 
     /// Deletes a record from a collaboration zone.
     public func deleteRecord(withID id: CKRecord.ID) async throws {
-        _ = try await database.deleteRecord(withID: id)
+        let results = try await deleteRecords(withIDs: [id])
+        if case let .failure(error) = results.first?.result { throw error }
+    }
+
+    /// Deletes records in 400-item chunks and reports partial failures by item.
+    public func deleteRecords(withIDs ids: [CKRecord.ID]) async throws -> [CloudKitBatchItemResult] {
+        try await client.delete(recordIDs: ids.map(CloudKitRecordIdentity.init), scope: databaseKind.syncScope)
     }
 
     /// Creates and saves a share for an entire collaboration zone.
@@ -175,6 +198,15 @@ public actor CloudKitSharingStore {
     @discardableResult
     public func accept(_ metadata: CKShare.Metadata) async throws -> CKShare {
         try await container.accept(metadata)
+    }
+}
+
+private extension CloudKitSharingDatabase {
+    var syncScope: CloudKitDatabaseScope {
+        switch self {
+        case .privateDatabase: .privateDatabase
+        case .sharedDatabase: .sharedDatabase
+        }
     }
 }
 #endif
