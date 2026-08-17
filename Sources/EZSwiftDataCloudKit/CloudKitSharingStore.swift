@@ -1,10 +1,11 @@
 //
 //  CloudKitSharingStore.swift
-//  EZSwiftData
+//  EZSwiftDataCloudKit
 //
 
 #if canImport(CloudKit)
 import CloudKit
+import EZSwiftData
 
 /// The CloudKit database used by a ``CloudKitSharingStore``.
 public enum CloudKitSharingDatabase: Sendable {

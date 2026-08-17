@@ -12,6 +12,10 @@ let package = Package(
             name: "EZSwiftData",
             targets: ["EZSwiftData"]
         ),
+        .library(
+            name: "EZSwiftDataCloudKit",
+            targets: ["EZSwiftDataCloudKit"]
+        ),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -19,9 +23,17 @@ let package = Package(
         .target(
             name: "EZSwiftData"
         ),
+        .target(
+            name: "EZSwiftDataCloudKit",
+            dependencies: ["EZSwiftData"]
+        ),
         .testTarget(
             name: "EZSwiftDataTests",
             dependencies: ["EZSwiftData"]
+        ),
+        .testTarget(
+            name: "EZSwiftDataCloudKitTests",
+            dependencies: ["EZSwiftData", "EZSwiftDataCloudKit"]
         ),
     ]
 )

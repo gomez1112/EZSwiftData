@@ -26,6 +26,33 @@ Small, pragmatic helpers for **SwiftData** that make it easier to:
 
 ---
 
+## Modules
+
+EZSwiftData is split into two modules so you only import the functionality your app needs. Add this GitHub package URL once, then select either or both library products for your app target.
+
+### EZSwiftData
+
+Core SwiftData conveniences:
+
+```swift
+import EZSwiftData
+```
+
+Use this module for model containers, native `ModelConfiguration` values, previews, seeded data, migrations, testing conveniences, and other SwiftData helpers. Native SwiftData CloudKit configuration remains part of this core workflow because it is an Apple `ModelConfiguration` capability rather than EZSwiftData's explicit sharing implementation.
+
+### EZSwiftDataCloudKit
+
+Optional explicit CloudKit sharing:
+
+```swift
+import EZSwiftData
+import EZSwiftDataCloudKit
+```
+
+Use this module when your app needs EZSwiftData's explicit `CKRecord`/`CKShare`-based sharing functionality. It depends on `EZSwiftData`; the core module never depends on the sharing module.
+
+---
+
 ## Sharing records with other iCloud users
 
 `CloudKitSharingStore` adds Apple-native collaboration without adding a third-party dependency. SwiftData's CloudKit-backed `ModelConfiguration` synchronizes a user's private data, but does not expose `CKShare`; shared records therefore live in a dedicated CloudKit record zone. Your app explicitly translates between its SwiftData models and `CKRecord` values, which keeps local persistence and collaboration boundaries clear.
@@ -37,6 +64,7 @@ Before using this API, enable **iCloud → CloudKit** for the consuming app targ
 ```swift
 import CloudKit
 import EZSwiftData
+import EZSwiftDataCloudKit
 import SwiftUI
 
 let containerIdentifier = "iCloud.com.example.MyApp"
@@ -83,13 +111,21 @@ Merge the returned values into SwiftData on the main actor. Persist a stable Clo
 
 1. In Xcode: **File → Add Package Dependencies…**
 2. Paste your repository URL
-3. Add **EZSwiftData** to your app target
+3. Select **EZSwiftData**, **EZSwiftDataCloudKit**, or both for your app target
 
-Then import:
+For SwiftData-only use, import:
 
 ```swift
 import EZSwiftData
 import SwiftData
+```
+
+For explicit CloudKit sharing, select both products and import:
+
+```swift
+import CloudKit
+import EZSwiftData
+import EZSwiftDataCloudKit
 ```
 
 ---
@@ -589,6 +625,8 @@ It guarantees:
 
 ## Package Layout
 
+- **EZSwiftData**: the independent core module for SwiftData containers, configurations, migrations, seeding, previews, and utilities
+- **EZSwiftDataCloudKit**: the optional module for explicit CloudKit record-zone and share management; depends on **EZSwiftData**
 - **ModelContainerFactory**: production + in-memory container creation, plus `createSeeded(...)` for one-line seeding
 - **SwiftDataPreviewContextConfig**: per-app preview definition (models + seed)
 - **DataPreviewer**: generic preview modifier that wires everything together
