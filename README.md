@@ -18,7 +18,7 @@ Small, pragmatic helpers for **SwiftData** that make it easier to:
 
 - Swift tools: **Swift 6.2**
 - Platforms:
-  - iOS **26+**
+  - iOS **18+**
   - macOS **15+**
   - visionOS **2+**
 
@@ -52,6 +52,21 @@ import EZSwiftDataCloudKit
 Use this module when your app needs EZSwiftData's explicit `CKRecord`/`CKShare`-based sharing functionality. It depends on `EZSwiftData`; the core module never depends on the sharing module.
 
 ---
+
+## Durable incremental synchronization
+
+Use the file-backed state store in production so database and record-zone change tokens survive cold launches:
+
+```swift
+let stateStore = FileCloudKitSyncStateStore()
+let coordinator = CloudKitSharingCoordinator(
+    containerIdentifier: "iCloud.com.example.MyApp",
+    client: LiveCloudKitClient(containerIdentifier: "iCloud.com.example.MyApp"),
+    stateStore: stateStore
+)
+```
+
+Call `installSubscriptions()` once for private and shared stores. A remote notification identifies the triggering scope, while the coordinator intentionally synchronizes both scopes and coalesces notifications received during a pass into one follow-up pass. Observe `coordinator.events` for out-of-band save conflict events; pass synchronization events remain on the stream returned by `synchronize()`.
 
 ## Sharing records with other iCloud users
 
