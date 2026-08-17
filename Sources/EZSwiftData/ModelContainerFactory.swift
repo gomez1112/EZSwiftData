@@ -103,6 +103,10 @@ nonisolated public struct ModelContainerFactory {
         migrationPlan: (any SchemaMigrationPlan.Type)? = nil,
         configuration: (Schema) -> ModelConfiguration
     ) throws -> ModelContainer {
+        guard !versionedSchema.models.isEmpty else {
+            throw Error.emptyModelList
+        }
+
         let schema = Schema(versionedSchema: versionedSchema)
         return try create(
             for: schema,
@@ -145,6 +149,9 @@ nonisolated public struct ModelContainerFactory {
     ) throws -> ModelContainer {
         guard let currentSchema = migrationPlan.schemas.last else {
             throw Error.emptyMigrationPlan
+        }
+        guard !currentSchema.models.isEmpty else {
+            throw Error.emptyModelList
         }
 
         let schema = Schema(versionedSchema: currentSchema)

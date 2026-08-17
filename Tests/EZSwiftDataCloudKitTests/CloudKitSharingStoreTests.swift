@@ -78,5 +78,92 @@ final class CloudKitSharingStoreTests: XCTestCase {
             1
         )
     }
+
+    func testSynchronizationDeduplicatesChangedZonesAndSkipsDeletedZones() async throws {
+        let liveZone = CloudKitZoneIdentity(zoneName: "Live", ownerName: "Owner")
+        let deletedZone = CloudKitZoneIdentity(zoneName: "Deleted", ownerName: "Owner")
+        let client = ZoneFilteringCloudKitClient(liveZone: liveZone, deletedZone: deletedZone)
+        let stateStore = InMemoryCloudKitSyncStateStore()
+        try await stateStore.save(
+            CloudKitSyncState(knownSharedZoneKeys: [deletedZone]),
+            containerIdentifier: "iCloud.tests"
+        )
+        let coordinator = CloudKitSharingCoordinator(
+            containerIdentifier: "iCloud.tests",
+            client: client,
+            stateStore: stateStore
+        )
+
+        var addedZones: [CloudKitZoneIdentity] = []
+        var removedZones: [CloudKitZoneIdentity] = []
+        for await event in await coordinator.synchronize() {
+            switch event {
+            case let .collaborationAdded(zone): addedZones.append(zone)
+            case let .collaborationRemoved(zone): removedZones.append(zone)
+            default: break
+            }
+        }
+
+        let requestedSharedZones = await client.requestedSharedZones()
+        XCTAssertEqual(requestedSharedZones, [liveZone])
+        XCTAssertEqual(addedZones, [liveZone])
+        XCTAssertEqual(removedZones, [deletedZone])
+    }
+}
+
+private actor ZoneFilteringCloudKitClient: CloudKitClient {
+    let liveZone: CloudKitZoneIdentity
+    let deletedZone: CloudKitZoneIdentity
+    private var sharedZoneRequests: [[CloudKitZoneIdentity]] = []
+
+    init(liveZone: CloudKitZoneIdentity, deletedZone: CloudKitZoneIdentity) {
+        self.liveZone = liveZone
+        self.deletedZone = deletedZone
+    }
+
+    func fetchDatabaseChanges(
+        scope: CloudKitDatabaseScope,
+        since token: CloudKitChangeToken?
+    ) -> CloudKitDatabaseChanges {
+        switch scope {
+        case .privateDatabase:
+            CloudKitDatabaseChanges(token: token, changedZoneIDs: [], deletedZoneIDs: [])
+        case .sharedDatabase:
+            CloudKitDatabaseChanges(
+                token: token,
+                changedZoneIDs: [liveZone, liveZone, deletedZone],
+                deletedZoneIDs: [deletedZone]
+            )
+        }
+    }
+
+    func fetchRecordZoneChanges(
+        scope: CloudKitDatabaseScope,
+        zoneIDs: [CloudKitZoneIdentity],
+        tokens: [CloudKitZoneIdentity: CloudKitChangeToken]
+    ) -> CloudKitZoneChanges {
+        if scope == .sharedDatabase {
+            sharedZoneRequests.append(zoneIDs)
+        }
+        return CloudKitZoneChanges(tokens: [:], changedRecords: [], deletedRecords: [])
+    }
+
+    func save(
+        records: [CloudKitRecordSnapshot],
+        scope: CloudKitDatabaseScope
+    ) -> [CloudKitBatchItemResult] {
+        []
+    }
+
+    func delete(
+        recordIDs: [CloudKitRecordIdentity],
+        scope: CloudKitDatabaseScope
+    ) -> [CloudKitBatchItemResult] {
+        []
+    }
+
+    func requestedSharedZones() -> [CloudKitZoneIdentity] {
+        sharedZoneRequests.flatMap(\.self)
+    }
 }
 #endif

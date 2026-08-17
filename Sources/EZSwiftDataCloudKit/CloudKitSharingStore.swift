@@ -158,7 +158,10 @@ public actor CloudKitSharingStore {
     /// Deletes a record from a collaboration zone.
     public func deleteRecord(withID id: CKRecord.ID) async throws {
         let results = try await deleteRecords(withIDs: [id])
-        if case let .failure(error) = results.first?.result { throw error }
+        guard let result = results.first else {
+            throw CloudKitSynchronizationError.missingOperationResult
+        }
+        if case let .failure(error) = result.result { throw error }
     }
 
     /// Deletes records in 400-item chunks and reports partial failures by item.
