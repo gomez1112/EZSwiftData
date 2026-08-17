@@ -69,7 +69,10 @@ public struct CloudKitRecordSnapshot: Hashable, Codable, Sendable {
     public let modificationDate: Date?
     public let encodedRecord: Data
 
-    public init(identity: CloudKitRecordIdentity, recordType: String, modificationDate: Date?, encodedRecord: Data) {
+    public init(
+        identity: CloudKitRecordIdentity, recordType: String, modificationDate: Date?,
+        encodedRecord: Data
+    ) {
         self.identity = identity
         self.recordType = recordType
         self.modificationDate = modificationDate
@@ -77,13 +80,18 @@ public struct CloudKitRecordSnapshot: Hashable, Codable, Sendable {
     }
 
     init(record: CKRecord) throws {
-        let data = try NSKeyedArchiver.archivedData(withRootObject: record, requiringSecureCoding: true)
-        self.init(identity: .init(record.recordID), recordType: record.recordType,
-                  modificationDate: record.modificationDate, encodedRecord: data)
+        let data = try NSKeyedArchiver.archivedData(
+            withRootObject: record, requiringSecureCoding: true)
+        self.init(
+            identity: .init(record.recordID), recordType: record.recordType,
+            modificationDate: record.modificationDate, encodedRecord: data)
     }
 
     func record() throws -> CKRecord {
-        guard let record = try NSKeyedUnarchiver.unarchivedObject(ofClass: CKRecord.self, from: encodedRecord) else {
+        guard
+            let record = try NSKeyedUnarchiver.unarchivedObject(
+                ofClass: CKRecord.self, from: encodedRecord)
+        else {
             throw CloudKitSynchronizationError.invalidSnapshot
         }
         return record
@@ -103,8 +111,13 @@ public struct CloudKitDatabaseChanges: Sendable {
     public let token: CloudKitChangeToken?
     public let changedZoneIDs: [CloudKitZoneIdentity]
     public let deletedZoneIDs: [CloudKitZoneIdentity]
-    public init(token: CloudKitChangeToken?, changedZoneIDs: [CloudKitZoneIdentity], deletedZoneIDs: [CloudKitZoneIdentity]) {
-        self.token = token; self.changedZoneIDs = changedZoneIDs; self.deletedZoneIDs = deletedZoneIDs
+    public init(
+        token: CloudKitChangeToken?, changedZoneIDs: [CloudKitZoneIdentity],
+        deletedZoneIDs: [CloudKitZoneIdentity]
+    ) {
+        self.token = token
+        self.changedZoneIDs = changedZoneIDs
+        self.deletedZoneIDs = deletedZoneIDs
     }
 }
 
@@ -112,8 +125,13 @@ public struct CloudKitZoneChanges: Sendable {
     public let tokens: [CloudKitZoneIdentity: CloudKitChangeToken]
     public let changedRecords: [CloudKitRecordSnapshot]
     public let deletedRecords: [CloudKitRecordDeletion]
-    public init(tokens: [CloudKitZoneIdentity: CloudKitChangeToken], changedRecords: [CloudKitRecordSnapshot], deletedRecords: [CloudKitRecordDeletion]) {
-        self.tokens = tokens; self.changedRecords = changedRecords; self.deletedRecords = deletedRecords
+    public init(
+        tokens: [CloudKitZoneIdentity: CloudKitChangeToken], changedRecords: [CloudKitRecordSnapshot],
+        deletedRecords: [CloudKitRecordDeletion]
+    ) {
+        self.tokens = tokens
+        self.changedRecords = changedRecords
+        self.deletedRecords = deletedRecords
     }
 }
 
@@ -127,16 +145,28 @@ public struct CloudKitOperationFailure: Error, Hashable, Codable, Sendable {
     public let message: String
     public let clientRecord: CloudKitRecordSnapshot?
     public let serverRecord: CloudKitRecordSnapshot?
-    public init(code: Int, message: String, clientRecord: CloudKitRecordSnapshot? = nil, serverRecord: CloudKitRecordSnapshot? = nil) {
-        self.code = code; self.message = message; self.clientRecord = clientRecord; self.serverRecord = serverRecord
+    public init(
+        code: Int, message: String, clientRecord: CloudKitRecordSnapshot? = nil,
+        serverRecord: CloudKitRecordSnapshot? = nil
+    ) {
+        self.code = code
+        self.message = message
+        self.clientRecord = clientRecord
+        self.serverRecord = serverRecord
     }
 }
 
 public protocol CloudKitClient: Sendable {
-    func fetchDatabaseChanges(scope: CloudKitDatabaseScope, since token: CloudKitChangeToken?) async throws -> CloudKitDatabaseChanges
-    func fetchRecordZoneChanges(scope: CloudKitDatabaseScope, zoneIDs: [CloudKitZoneIdentity], tokens: [CloudKitZoneIdentity: CloudKitChangeToken]) async throws -> CloudKitZoneChanges
-    func save(records: [CloudKitRecordSnapshot], scope: CloudKitDatabaseScope) async throws -> [CloudKitBatchItemResult]
-    func delete(recordIDs: [CloudKitRecordIdentity], scope: CloudKitDatabaseScope) async throws -> [CloudKitBatchItemResult]
+    func fetchDatabaseChanges(scope: CloudKitDatabaseScope, since token: CloudKitChangeToken?)
+        async throws -> CloudKitDatabaseChanges
+    func fetchRecordZoneChanges(
+        scope: CloudKitDatabaseScope, zoneIDs: [CloudKitZoneIdentity],
+        tokens: [CloudKitZoneIdentity: CloudKitChangeToken]
+    ) async throws -> CloudKitZoneChanges
+    func save(records: [CloudKitRecordSnapshot], scope: CloudKitDatabaseScope) async throws
+        -> [CloudKitBatchItemResult]
+    func delete(recordIDs: [CloudKitRecordIdentity], scope: CloudKitDatabaseScope) async throws
+        -> [CloudKitBatchItemResult]
 }
 
 /// The production client. Operations are deliberately used instead of query-based
@@ -155,71 +185,138 @@ public actor LiveCloudKitClient: CloudKitClient {
         }
     }
 
-    public func fetchDatabaseChanges(scope: CloudKitDatabaseScope, since token: CloudKitChangeToken?) async throws -> CloudKitDatabaseChanges {
-        let previous = try token?.decoded()
-        return try await withCheckedThrowingContinuation { continuation in
+    public func fetchDatabaseChanges(
+        scope: CloudKitDatabaseScope, since token: CloudKitChangeToken?
+    ) async throws -> CloudKitDatabaseChanges {
+        var previous = try token?.decoded()
+        let collector = DatabaseChangeCollector()
+        var moreComing = true
+        while moreComing {
+            let page = try await fetchDatabaseChangesPage(
+                scope: scope,
+                previous: previous,
+                collector: collector
+            )
+            previous = page.token
+            moreComing = page.moreComing
+        }
+        return try collector.value()
+    }
+
+    private func fetchDatabaseChangesPage(
+        scope: CloudKitDatabaseScope,
+        previous: CKServerChangeToken?,
+        collector: DatabaseChangeCollector
+    ) async throws -> (token: CKServerChangeToken, moreComing: Bool) {
+        try await withCheckedThrowingContinuation { continuation in
             let operation = CKFetchDatabaseChangesOperation(previousServerChangeToken: previous)
-            let collector = DatabaseChangeCollector()
-            operation.recordZoneWithIDChangedBlock = { id in Task { await collector.changed(id) } }
-            operation.recordZoneWithIDWasDeletedBlock = { id, _ in Task { await collector.deleted(id) } }
-            operation.changeTokenUpdatedBlock = { token in Task { await collector.token(token) } }
+            operation.recordZoneWithIDChangedBlock = collector.changed
+            operation.recordZoneWithIDWasDeletedBlock = { id, _ in collector.deleted(id) }
+            operation.changeTokenUpdatedBlock = collector.token
             operation.fetchDatabaseChangesResultBlock = { result in
-                Task {
-                    switch result {
-                    case let .success((token, _)):
-                        await collector.token(token)
-                        continuation.resume(returning: try await collector.value())
-                    case let .failure(error): continuation.resume(throwing: error)
-                    }
+                switch result {
+                case let .success((token, moreComing)):
+                    collector.token(token)
+                    continuation.resume(returning: (token, moreComing))
+                case let .failure(error):
+                    continuation.resume(throwing: error)
                 }
             }
             database(scope).add(operation)
         }
     }
 
-    public func fetchRecordZoneChanges(scope: CloudKitDatabaseScope, zoneIDs: [CloudKitZoneIdentity], tokens: [CloudKitZoneIdentity: CloudKitChangeToken]) async throws -> CloudKitZoneChanges {
-        var configurations: [CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneConfiguration] = [:]
+    public func fetchRecordZoneChanges(
+        scope: CloudKitDatabaseScope, zoneIDs: [CloudKitZoneIdentity],
+        tokens: [CloudKitZoneIdentity: CloudKitChangeToken]
+    ) async throws -> CloudKitZoneChanges {
+        var previousTokens: [CloudKitZoneIdentity: CKServerChangeToken] = [:]
         for zone in zoneIDs {
+            if let token = try tokens[zone]?.decoded() { previousTokens[zone] = token }
+        }
+        let collector = ZoneChangeCollector()
+        var pendingZones = Set(zoneIDs)
+        while !pendingZones.isEmpty {
+            pendingZones = try await fetchRecordZoneChangesPage(
+                scope: scope,
+                zones: pendingZones,
+                previousTokens: &previousTokens,
+                collector: collector
+            )
+        }
+        return try collector.value()
+    }
+
+    private func fetchRecordZoneChangesPage(
+        scope: CloudKitDatabaseScope,
+        zones: Set<CloudKitZoneIdentity>,
+        previousTokens: inout [CloudKitZoneIdentity: CKServerChangeToken],
+        collector: ZoneChangeCollector
+    ) async throws -> Set<CloudKitZoneIdentity> {
+        var configurations: [CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneConfiguration] =
+            [:]
+        for zone in zones {
             let configuration = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
-            configuration.previousServerChangeToken = try tokens[zone]?.decoded()
+            configuration.previousServerChangeToken = previousTokens[zone]
             configurations[zone.ckID] = configuration
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            let operation = CKFetchRecordZoneChangesOperation(recordZoneIDs: zoneIDs.map(\.ckID), configurationsByRecordZoneID: configurations)
-            let collector = ZoneChangeCollector()
+        let page = try await withCheckedThrowingContinuation { continuation in
+            let pageState = ZonePageState()
+            let operation = CKFetchRecordZoneChangesOperation(
+                recordZoneIDs: zones.map(\.ckID), configurationsByRecordZoneID: configurations)
             operation.recordWasChangedBlock = { _, result in
-                Task { if case let .success(record) = result { try await collector.changed(record) } }
+                switch result {
+                case let .success(record): collector.changed(record)
+                case let .failure(error): collector.fail(error)
+                }
             }
-            operation.recordWithIDWasDeletedBlock = { id, type in Task { await collector.deleted(id, type: type) } }
+            operation.recordWithIDWasDeletedBlock = collector.deleted
             operation.recordZoneChangeTokensUpdatedBlock = { id, token, _ in
-                Task { if let token { try await collector.token(token, zone: id) } }
+                if let token { collector.token(token, zone: id) }
             }
             operation.recordZoneFetchResultBlock = { id, result in
-                Task { if case let .success((token, _, _)) = result, let token { try await collector.token(token, zone: id) } }
+                switch result {
+                case let .success((token, _, moreComing)):
+                    if let token { collector.token(token, zone: id) }
+                    pageState.finished(zone: id, token: token, moreComing: moreComing)
+                case let .failure(error): collector.fail(error)
+                }
             }
             operation.fetchRecordZoneChangesResultBlock = { result in
-                Task {
-                    switch result {
-                    case .success: continuation.resume(returning: await collector.value())
-                    case let .failure(error): continuation.resume(throwing: error)
-                    }
+                switch result {
+                case .success:
+                    do {
+                        try collector.checkForError()
+                        continuation.resume(returning: pageState.value())
+                    } catch { continuation.resume(throwing: error) }
+                case let .failure(error): continuation.resume(throwing: error)
                 }
             }
             database(scope).add(operation)
         }
+        for (zone, token) in page.tokens { previousTokens[zone] = token }
+        return page.moreComing
     }
 
-    public func save(records: [CloudKitRecordSnapshot], scope: CloudKitDatabaseScope) async throws -> [CloudKitBatchItemResult] {
+    public func save(records: [CloudKitRecordSnapshot], scope: CloudKitDatabaseScope) async throws
+        -> [CloudKitBatchItemResult]
+    {
         try await modify(saving: records, deleting: [], scope: scope)
     }
 
-    public func delete(recordIDs: [CloudKitRecordIdentity], scope: CloudKitDatabaseScope) async throws -> [CloudKitBatchItemResult] {
+    public func delete(recordIDs: [CloudKitRecordIdentity], scope: CloudKitDatabaseScope)
+        async throws -> [CloudKitBatchItemResult]
+    {
         try await modify(saving: [], deleting: recordIDs, scope: scope)
     }
 
-    private func modify(saving: [CloudKitRecordSnapshot], deleting: [CloudKitRecordIdentity], scope: CloudKitDatabaseScope) async throws -> [CloudKitBatchItemResult] {
+    private func modify(
+        saving: [CloudKitRecordSnapshot], deleting: [CloudKitRecordIdentity],
+        scope: CloudKitDatabaseScope
+    ) async throws -> [CloudKitBatchItemResult] {
         var all: [CloudKitBatchItemResult] = []
-        let entries = saving.map { (snapshot: $0, deletion: Optional<CloudKitRecordIdentity>.none) }
+        let entries =
+            saving.map { (snapshot: $0, deletion: Optional<CloudKitRecordIdentity>.none) }
             + deleting.map { (snapshot: Optional<CloudKitRecordSnapshot>.none, deletion: $0) }
         for start in stride(from: 0, to: entries.count, by: 400) {
             let chunk = entries[start..<min(start + 400, entries.count)]
@@ -229,9 +326,20 @@ public actor LiveCloudKitClient: CloudKitClient {
                 let operation = CKModifyRecordsOperation(recordsToSave: saves, recordIDsToDelete: deletes)
                 operation.savePolicy = .ifServerRecordUnchanged
                 let collector = ModifyCollector()
-                operation.perRecordSaveBlock = { id, result in Task { await collector.saved(id, result: result) } }
-                operation.perRecordDeleteBlock = { id, result in Task { await collector.deleted(id, result: result) } }
-                operation.modifyRecordsResultBlock = { _ in Task { continuation.resume(returning: await collector.value()) } }
+                operation.perRecordSaveBlock = collector.saved
+                operation.perRecordDeleteBlock = collector.deleted
+                operation.modifyRecordsResultBlock = { result in
+                    let operationError: (any Error)?
+                    switch result {
+                    case .success: operationError = nil
+                    case let .failure(error): operationError = error
+                    }
+                    continuation.resume(
+                        returning: collector.value(
+                            orderedBy: chunk.compactMap { $0.snapshot?.identity ?? $0.deletion },
+                            operationError: operationError
+                        ))
+                }
                 database(scope).add(operation)
             }
             all += results
@@ -240,68 +348,175 @@ public actor LiveCloudKitClient: CloudKitClient {
     }
 }
 
-private actor DatabaseChangeCollector {
-    var changedZones: [CloudKitZoneIdentity] = []
-    var deletedZones: [CloudKitZoneIdentity] = []
-    var latestToken: CKServerChangeToken?
-    func changed(_ id: CKRecordZone.ID) { changedZones.append(.init(id)) }
-    func deleted(_ id: CKRecordZone.ID) { deletedZones.append(.init(id)) }
-    func token(_ token: CKServerChangeToken) { latestToken = token }
+private final class DatabaseChangeCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var changedZones: [CloudKitZoneIdentity] = []
+    private var deletedZones: [CloudKitZoneIdentity] = []
+    private var latestToken: CKServerChangeToken?
+    func changed(_ id: CKRecordZone.ID) { lock.withLock { changedZones.append(.init(id)) } }
+    func deleted(_ id: CKRecordZone.ID) { lock.withLock { deletedZones.append(.init(id)) } }
+    func token(_ token: CKServerChangeToken) { lock.withLock { latestToken = token } }
     func value() throws -> CloudKitDatabaseChanges {
-        try .init(token: latestToken.map(CloudKitChangeToken.init), changedZoneIDs: changedZones, deletedZoneIDs: deletedZones)
-    }
-}
-
-private actor ZoneChangeCollector {
-    var tokens: [CloudKitZoneIdentity: CloudKitChangeToken] = [:]
-    var changedRecords: [CloudKitRecordSnapshot] = []
-    var deletedRecords: [CloudKitRecordDeletion] = []
-    func changed(_ record: CKRecord) throws { changedRecords.append(try .init(record: record)) }
-    func deleted(_ id: CKRecord.ID, type: String) { deletedRecords.append(.init(identity: .init(id), recordType: type)) }
-    func token(_ token: CKServerChangeToken, zone: CKRecordZone.ID) throws { tokens[.init(zone)] = try .init(token) }
-    func value() -> CloudKitZoneChanges { .init(tokens: tokens, changedRecords: changedRecords, deletedRecords: deletedRecords) }
-}
-
-private actor ModifyCollector {
-    var results: [CloudKitBatchItemResult] = []
-    func saved(_ id: CKRecord.ID, result: Result<CKRecord, any Error>) {
-        do { results.append(.init(identity: .init(id), result: .success(try .init(record: result.get())))) }
-        catch { results.append(.init(identity: .init(id), result: .failure(.init(error)))) }
-    }
-    func deleted(_ id: CKRecord.ID, result: Result<Void, any Error>) {
-        switch result {
-        case .success: results.append(.init(identity: .init(id), result: .success(nil)))
-        case let .failure(error): results.append(.init(identity: .init(id), result: .failure(.init(error))))
+        try lock.withLock {
+            try .init(
+                token: latestToken.map(CloudKitChangeToken.init), changedZoneIDs: changedZones,
+                deletedZoneIDs: deletedZones)
         }
     }
-    func value() -> [CloudKitBatchItemResult] { results }
 }
 
-private extension CloudKitOperationFailure {
-    init(_ error: any Error) {
+private final class ZoneChangeCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tokens: [CloudKitZoneIdentity: CloudKitChangeToken] = [:]
+    private var changedRecords: [CloudKitRecordSnapshot] = []
+    private var deletedRecords: [CloudKitRecordDeletion] = []
+    private var firstError: (any Error)?
+    func changed(_ record: CKRecord) {
+        lock.withLock {
+            do { changedRecords.append(try .init(record: record)) } catch {
+                firstError = firstError ?? error
+            }
+        }
+    }
+    func deleted(_ id: CKRecord.ID, type: String) {
+        lock.withLock { deletedRecords.append(.init(identity: .init(id), recordType: type)) }
+    }
+    func token(_ token: CKServerChangeToken, zone: CKRecordZone.ID) {
+        lock.withLock {
+            do { tokens[.init(zone)] = try .init(token) } catch { firstError = firstError ?? error }
+        }
+    }
+    func fail(_ error: any Error) { lock.withLock { firstError = firstError ?? error } }
+    func checkForError() throws { try lock.withLock { if let firstError { throw firstError } } }
+    func value() throws -> CloudKitZoneChanges {
+        try lock.withLock {
+            if let firstError { throw firstError }
+            return .init(tokens: tokens, changedRecords: changedRecords, deletedRecords: deletedRecords)
+        }
+    }
+}
+
+private final class ZonePageState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tokens: [CloudKitZoneIdentity: CKServerChangeToken] = [:]
+    private var moreComing: Set<CloudKitZoneIdentity> = []
+
+    func finished(zone: CKRecordZone.ID, token: CKServerChangeToken?, moreComing: Bool) {
+        lock.withLock {
+            let identity = CloudKitZoneIdentity(zone)
+            if let token { tokens[identity] = token }
+            if moreComing { self.moreComing.insert(identity) }
+        }
+    }
+
+    func value() -> (
+        tokens: [CloudKitZoneIdentity: CKServerChangeToken], moreComing: Set<CloudKitZoneIdentity>
+    ) {
+        lock.withLock { (tokens, moreComing) }
+    }
+}
+
+private final class ModifyCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var results: [CloudKitRecordIdentity: CloudKitBatchItemResult] = [:]
+    func saved(_ id: CKRecord.ID, result: Result<CKRecord, any Error>) {
+        let item: CloudKitBatchItemResult
+        do {
+            item = .init(identity: .init(id), result: .success(try .init(record: result.get())))
+        } catch { item = .init(identity: .init(id), result: .failure(.init(error))) }
+        lock.withLock { results[item.identity] = item }
+    }
+    func deleted(_ id: CKRecord.ID, result: Result<Void, any Error>) {
+        let item =
+            switch result {
+            case .success: CloudKitBatchItemResult(identity: .init(id), result: .success(nil))
+            case let .failure(error):
+                CloudKitBatchItemResult(identity: .init(id), result: .failure(.init(error)))
+            }
+        lock.withLock { results[item.identity] = item }
+    }
+    func value(orderedBy identities: [CloudKitRecordIdentity], operationError: (any Error)?)
+        -> [CloudKitBatchItemResult]
+    {
+        lock.withLock {
+            identities.map { identity in
+                results[identity]
+                    ?? .init(
+                        identity: identity,
+                        result: .failure(
+                            .init(operationError ?? CloudKitSynchronizationError.missingOperationResult))
+                    )
+            }
+        }
+    }
+}
+
+extension CloudKitOperationFailure {
+    fileprivate init(_ error: any Error) {
         let nsError = error as NSError
         let ckError = error as? CKError
         self.init(
             code: nsError.code,
             message: nsError.localizedDescription,
-            clientRecord: try? (ckError?.userInfo[CKRecordChangedErrorClientRecordKey] as? CKRecord).map(CloudKitRecordSnapshot.init),
-            serverRecord: try? (ckError?.userInfo[CKRecordChangedErrorServerRecordKey] as? CKRecord).map(CloudKitRecordSnapshot.init)
+            clientRecord: try? (ckError?.userInfo[CKRecordChangedErrorClientRecordKey] as? CKRecord)
+                .map(CloudKitRecordSnapshot.init),
+            serverRecord: try? (ckError?.userInfo[CKRecordChangedErrorServerRecordKey] as? CKRecord)
+                .map(CloudKitRecordSnapshot.init)
         )
     }
 }
 
-public enum CloudKitSynchronizationError: Error, Sendable { case invalidSnapshot }
+public enum CloudKitSynchronizationError: Error, Sendable {
+    case invalidSnapshot
+    case missingOperationResult
+}
 
 public struct CloudKitSyncState: Codable, Equatable, Sendable {
     public var privateDatabaseToken: CloudKitChangeToken?
     public var sharedDatabaseToken: CloudKitChangeToken?
     public var zoneTokens: [CloudKitZoneIdentity: CloudKitChangeToken]
+    /// Private-database zone tokens. Kept separate because an owner can use the
+    /// same zone identifier in both the private and shared databases.
+    public var privateZoneTokens: [CloudKitZoneIdentity: CloudKitChangeToken]
     public var knownSharedZoneKeys: Set<CloudKitZoneIdentity>
 
-    public init(privateDatabaseToken: CloudKitChangeToken? = nil, sharedDatabaseToken: CloudKitChangeToken? = nil,
-                zoneTokens: [CloudKitZoneIdentity: CloudKitChangeToken] = [:], knownSharedZoneKeys: Set<CloudKitZoneIdentity> = []) {
-        self.privateDatabaseToken = privateDatabaseToken; self.sharedDatabaseToken = sharedDatabaseToken
-        self.zoneTokens = zoneTokens; self.knownSharedZoneKeys = knownSharedZoneKeys
+    private enum CodingKeys: String, CodingKey {
+        case privateDatabaseToken
+        case sharedDatabaseToken
+        case zoneTokens
+        case privateZoneTokens
+        case knownSharedZoneKeys
+    }
+
+    public init(
+        privateDatabaseToken: CloudKitChangeToken? = nil,
+        sharedDatabaseToken: CloudKitChangeToken? = nil,
+        zoneTokens: [CloudKitZoneIdentity: CloudKitChangeToken] = [:],
+        privateZoneTokens: [CloudKitZoneIdentity: CloudKitChangeToken] = [:],
+        knownSharedZoneKeys: Set<CloudKitZoneIdentity> = []
+    ) {
+        self.privateDatabaseToken = privateDatabaseToken
+        self.sharedDatabaseToken = sharedDatabaseToken
+        self.zoneTokens = zoneTokens
+        self.privateZoneTokens = privateZoneTokens
+        self.knownSharedZoneKeys = knownSharedZoneKeys
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        privateDatabaseToken = try values.decodeIfPresent(
+            CloudKitChangeToken.self, forKey: .privateDatabaseToken)
+        sharedDatabaseToken = try values.decodeIfPresent(
+            CloudKitChangeToken.self, forKey: .sharedDatabaseToken)
+        zoneTokens =
+            try values.decodeIfPresent(
+                [CloudKitZoneIdentity: CloudKitChangeToken].self, forKey: .zoneTokens) ?? [:]
+        privateZoneTokens =
+            try values.decodeIfPresent(
+                [CloudKitZoneIdentity: CloudKitChangeToken].self, forKey: .privateZoneTokens) ?? [:]
+        knownSharedZoneKeys =
+            try values.decodeIfPresent(Set<CloudKitZoneIdentity>.self, forKey: .knownSharedZoneKeys)
+            ?? []
     }
 }
 
@@ -313,22 +528,30 @@ public protocol CloudKitSyncStateStore: Sendable {
 public actor InMemoryCloudKitSyncStateStore: CloudKitSyncStateStore {
     private var states: [String: CloudKitSyncState] = [:]
     public init() {}
-    public func load(containerIdentifier: String) -> CloudKitSyncState { states[containerIdentifier] ?? .init() }
-    public func save(_ state: CloudKitSyncState, containerIdentifier: String) { states[containerIdentifier] = state }
+    public func load(containerIdentifier: String) -> CloudKitSyncState {
+        states[containerIdentifier] ?? .init()
+    }
+    public func save(_ state: CloudKitSyncState, containerIdentifier: String) {
+        states[containerIdentifier] = state
+    }
 }
 
 public enum CloudKitConflictPolicy: Sendable {
     case serverWins
     case clientWins
     case newestModificationDateWins
-    case custom(@Sendable (CloudKitRecordSnapshot, CloudKitRecordSnapshot) async -> CloudKitRecordSnapshot)
+    case custom(
+        @Sendable (CloudKitRecordSnapshot, CloudKitRecordSnapshot) async -> CloudKitRecordSnapshot)
 
-    public func resolve(client: CloudKitRecordSnapshot, server: CloudKitRecordSnapshot) async -> CloudKitRecordSnapshot {
+    public func resolve(client: CloudKitRecordSnapshot, server: CloudKitRecordSnapshot) async
+        -> CloudKitRecordSnapshot
+    {
         switch self {
         case .serverWins: server
         case .clientWins: client
         case .newestModificationDateWins:
-            (client.modificationDate ?? .distantPast) >= (server.modificationDate ?? .distantPast) ? client : server
+            (client.modificationDate ?? .distantPast) >= (server.modificationDate ?? .distantPast)
+                ? client : server
         case let .custom(resolver): await resolver(client, server)
         }
     }
@@ -352,7 +575,9 @@ public enum CloudKitRemoteNotificationResult: Equatable, Sendable {
 
 public struct CloudKitSharingConfiguration: Sendable {
     public var conflictPolicy: CloudKitConflictPolicy
-    public init(conflictPolicy: CloudKitConflictPolicy = .serverWins) { self.conflictPolicy = conflictPolicy }
+    public init(conflictPolicy: CloudKitConflictPolicy = .serverWins) {
+        self.conflictPolicy = conflictPolicy
+    }
 }
 
 public actor CloudKitSharingCoordinator {
@@ -362,10 +587,15 @@ public actor CloudKitSharingCoordinator {
     private let configuration: CloudKitSharingConfiguration
     private var pushSynchronizationTask: Task<Void, Never>?
 
-    public init(containerIdentifier: String, client: any CloudKitClient, stateStore: any CloudKitSyncStateStore,
-                configuration: CloudKitSharingConfiguration = .init()) {
-        self.containerIdentifier = containerIdentifier; self.client = client
-        self.stateStore = stateStore; self.configuration = configuration
+    public init(
+        containerIdentifier: String, client: any CloudKitClient,
+        stateStore: any CloudKitSyncStateStore,
+        configuration: CloudKitSharingConfiguration = .init()
+    ) {
+        self.containerIdentifier = containerIdentifier
+        self.client = client
+        self.stateStore = stateStore
+        self.configuration = configuration
     }
 
     public func synchronize() -> AsyncStream<CloudKitSyncEvent> {
@@ -377,9 +607,12 @@ public actor CloudKitSharingCoordinator {
 
     /// Validates the subscription rather than treating every CloudKit push as ours.
     /// Multiple pushes arriving before the scheduled task starts share one sync pass.
-    public func processRemoteNotification(userInfo: [AnyHashable: Any]) -> CloudKitRemoteNotificationResult {
+    public func processRemoteNotification(userInfo: [AnyHashable: Any])
+        -> CloudKitRemoteNotificationResult
+    {
         guard let notification = CKNotification(fromRemoteNotificationDictionary: userInfo),
-              let subscriptionID = notification.subscriptionID else { return .ignored }
+            let subscriptionID = notification.subscriptionID
+        else { return .ignored }
         let prefix = "com.ezswiftdata.sharing.\(containerIdentifier)."
         let scope: CloudKitDatabaseScope
         switch subscriptionID {
@@ -401,16 +634,20 @@ public actor CloudKitSharingCoordinator {
 
     /// Saves records and resolves optimistic-lock conflicts individually without
     /// discarding successful siblings in the same operation.
-    public func save(_ records: [CloudKitRecordSnapshot], scope: CloudKitDatabaseScope) async -> [CloudKitBatchItemResult] {
+    public func save(_ records: [CloudKitRecordSnapshot], scope: CloudKitDatabaseScope) async
+        -> [CloudKitBatchItemResult]
+    {
         do {
             let initial = try await client.save(records: records, scope: scope)
             var final = initial
             for index in final.indices {
                 guard case let .failure(failure) = final[index].result,
-                      failure.code == CKError.serverRecordChanged.rawValue,
-                      let clientRecord = failure.clientRecord,
-                      let serverRecord = failure.serverRecord else { continue }
-                let resolved = await configuration.conflictPolicy.resolve(client: clientRecord, server: serverRecord)
+                    failure.code == CKError.serverRecordChanged.rawValue,
+                    let clientRecord = failure.clientRecord,
+                    let serverRecord = failure.serverRecord
+                else { continue }
+                let resolved = await configuration.conflictPolicy.resolve(
+                    client: clientRecord, server: serverRecord)
                 if let retry = try? await client.save(records: [resolved], scope: scope).first {
                     final[index] = retry
                 }
@@ -438,9 +675,12 @@ public actor CloudKitSharingCoordinator {
         output.finish()
     }
 
-    private func synchronize(_ scope: CloudKitDatabaseScope, state: inout CloudKitSyncState,
-                             output: AsyncStream<CloudKitSyncEvent>.Continuation) async throws {
-        var databaseToken = scope == .privateDatabase ? state.privateDatabaseToken : state.sharedDatabaseToken
+    private func synchronize(
+        _ scope: CloudKitDatabaseScope, state: inout CloudKitSyncState,
+        output: AsyncStream<CloudKitSyncEvent>.Continuation
+    ) async throws {
+        var databaseToken =
+            scope == .privateDatabase ? state.privateDatabaseToken : state.sharedDatabaseToken
         let databaseChanges: CloudKitDatabaseChanges
         do {
             databaseChanges = try await client.fetchDatabaseChanges(scope: scope, since: databaseToken)
@@ -448,28 +688,48 @@ public actor CloudKitSharingCoordinator {
             databaseToken = nil
             databaseChanges = try await client.fetchDatabaseChanges(scope: scope, since: nil)
         }
-        if scope == .privateDatabase { state.privateDatabaseToken = databaseChanges.token }
-        else { state.sharedDatabaseToken = databaseChanges.token }
+        if scope == .privateDatabase {
+            state.privateDatabaseToken = databaseChanges.token
+        } else {
+            state.sharedDatabaseToken = databaseChanges.token
+        }
 
         for zone in databaseChanges.deletedZoneIDs {
-            state.zoneTokens.removeValue(forKey: zone)
-            if state.knownSharedZoneKeys.remove(zone) != nil { output.yield(.collaborationRemoved(zone)) }
+            switch scope {
+            case .privateDatabase: state.privateZoneTokens.removeValue(forKey: zone)
+            case .sharedDatabase: state.zoneTokens.removeValue(forKey: zone)
+            }
+            if state.knownSharedZoneKeys.remove(zone) != nil {
+                output.yield(.collaborationRemoved(zone))
+            }
         }
         if scope == .sharedDatabase {
-            for zone in databaseChanges.changedZoneIDs where state.knownSharedZoneKeys.insert(zone).inserted {
+            for zone in databaseChanges.changedZoneIDs
+            where state.knownSharedZoneKeys.insert(zone).inserted {
                 output.yield(.collaborationAdded(zone))
             }
         }
         guard !databaseChanges.changedZoneIDs.isEmpty else { return }
 
         let changes: CloudKitZoneChanges
+        let zoneTokens = scope == .privateDatabase ? state.privateZoneTokens : state.zoneTokens
         do {
-            changes = try await client.fetchRecordZoneChanges(scope: scope, zoneIDs: databaseChanges.changedZoneIDs, tokens: state.zoneTokens)
+            changes = try await client.fetchRecordZoneChanges(
+                scope: scope, zoneIDs: databaseChanges.changedZoneIDs, tokens: zoneTokens)
         } catch let error as CKError where error.code == .changeTokenExpired {
-            for zone in databaseChanges.changedZoneIDs { state.zoneTokens.removeValue(forKey: zone) }
-            changes = try await client.fetchRecordZoneChanges(scope: scope, zoneIDs: databaseChanges.changedZoneIDs, tokens: [:])
+            for zone in databaseChanges.changedZoneIDs {
+                switch scope {
+                case .privateDatabase: state.privateZoneTokens.removeValue(forKey: zone)
+                case .sharedDatabase: state.zoneTokens.removeValue(forKey: zone)
+                }
+            }
+            changes = try await client.fetchRecordZoneChanges(
+                scope: scope, zoneIDs: databaseChanges.changedZoneIDs, tokens: [:])
         }
-        state.zoneTokens.merge(changes.tokens) { _, new in new }
+        switch scope {
+        case .privateDatabase: state.privateZoneTokens.merge(changes.tokens) { _, new in new }
+        case .sharedDatabase: state.zoneTokens.merge(changes.tokens) { _, new in new }
+        }
         if !changes.changedRecords.isEmpty { output.yield(.recordsChanged(changes.changedRecords)) }
         if !changes.deletedRecords.isEmpty { output.yield(.recordsDeleted(changes.deletedRecords)) }
     }
