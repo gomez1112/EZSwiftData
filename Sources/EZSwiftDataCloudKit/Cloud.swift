@@ -17,6 +17,10 @@
 
   /// The package's progressive-disclosure entry point.
   public actor Cloud {
+    /// Uses the default CloudKit container declared by the consuming app's entitlements.
+    ///
+    /// This mirrors SwiftData's default-container behavior. Create a ``Cloud`` with an
+    /// explicit ``CloudConfiguration`` only when selecting a non-default container.
     public static let `default` = Cloud(configuration: .init(containerIdentifier: ""))
 
     public let configuration: CloudConfiguration
