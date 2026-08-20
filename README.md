@@ -18,9 +18,10 @@ Small, pragmatic helpers for **SwiftData** that make it easier to:
 
 - Swift tools: **Swift 6.2**
 - Platforms:
-  - iOS **18+**
-  - macOS **15+**
-  - visionOS **2+**
+  - iOS **26+**
+  - macOS **26+**
+  - visionOS **26+**
+  - watchOS **26+** (core APIs; system sharing UI is unavailable)
 
 (These match the package manifest.)
 
@@ -69,6 +70,22 @@ let coordinator = CloudKitSharingCoordinator(
 Call `installSubscriptions()` once for private and shared stores. A remote notification identifies the triggering scope, while the coordinator intentionally synchronizes both scopes and coalesces notifications received during a pass into one follow-up pass. Observe `coordinator.events` for out-of-band save conflict events; pass synchronization events remain on the stream returned by `synchronize()`.
 
 ## Sharing records with other iCloud users
+
+For a small, model-first API, conform a normal value to `CloudShareable` and use
+`Cloud`. Property wrappers document advanced native-field intent without forcing
+CloudKit types into the domain model:
+
+```swift
+struct Project: CloudShareable {
+  let id: UUID
+  @CloudField var name: String
+}
+
+let cloud = Cloud(configuration: .init(
+  containerIdentifier: "iCloud.com.example.MyApp"
+))
+let share = try await cloud.share(project, options: .init(title: project.name))
+```
 
 `CloudKitSharingStore` adds Apple-native collaboration without adding a third-party dependency. SwiftData's CloudKit-backed `ModelConfiguration` synchronizes a user's private data, but does not expose `CKShare`; shared records therefore live in a dedicated CloudKit record zone. Your app explicitly translates between its SwiftData models and `CKRecord` values, which keeps local persistence and collaboration boundaries clear.
 
