@@ -81,11 +81,22 @@ struct Project: CloudShareable {
   @CloudField var name: String
 }
 
-let cloud = Cloud(configuration: .init(
-  containerIdentifier: "iCloud.com.example.MyApp"
-))
+// Uses the default CloudKit container selected in the app target's
+// iCloud capability, just like SwiftData's automatic CloudKit setup.
+let cloud = Cloud.default
 let share = try await cloud.share(project, options: .init(title: project.name))
 ```
+
+You do not need to repeat the container identifier when the app uses its default
+CloudKit container. `Cloud.default` resolves it through `CKContainer.default()`;
+the consuming app's iCloud entitlement remains the source of truth. Pass an
+explicit `CloudConfiguration(containerIdentifier:)` only when the app has
+multiple CloudKit containers and this feature must use a non-default one.
+
+The lower-level `CloudKitSharingStore`, `LiveCloudKitClient`, and incremental
+synchronization APIs still require a stable identifier because they use it for
+subscriptions and persisted synchronization state in addition to selecting a
+`CKContainer`.
 
 `CloudKitSharingStore` adds Apple-native collaboration without adding a third-party dependency. SwiftData's CloudKit-backed `ModelConfiguration` synchronizes a user's private data, but does not expose `CKShare`; shared records therefore live in a dedicated CloudKit record zone. Your app explicitly translates between its SwiftData models and `CKRecord` values, which keeps local persistence and collaboration boundaries clear.
 
